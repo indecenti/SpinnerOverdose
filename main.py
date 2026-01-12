@@ -3945,6 +3945,839 @@ class Kaleidoscope(MiniGame):
 
 
 
+
+
+
+
+
+class YahtzeeSpinner(MiniGame):
+    """
+    Yahtzee Spinner - Versione finale ottimizzata
+    
+    - Spinner sensibile per selezione dadi/categorie
+    - Lancio dadi richiede più rotazione
+    - Se tieni tutti i 5 dadi → vai direttamente allo scoring
+    - Layout scorecard compatto e corretto
+    """
+    
+    CATEGORIES = [
+        ('ones', 'Ones', True),
+        ('twos', 'Twos', True),
+        ('threes', 'Threes', True),
+        ('fours', 'Fours', True),
+        ('fives', 'Fives', True),
+        ('sixes', 'Sixes', True),
+        ('three_kind', '3 of Kind', False),
+        ('four_kind', '4 of Kind', False),
+        ('full_house', 'Full House', False),
+        ('sm_straight', 'Sm Straight', False),
+        ('lg_straight', 'Lg Straight', False),
+        ('yahtzee', 'YAHTZEE', False),
+        ('chance', 'Chance', False)
+    ]
+    
+    def __init__(self, synth=None):
+        super().__init__()
+        self.synth = synth
+        self.spinner_buffer = 0 
+        # Game state
+        self.dice = [1, 1, 1, 1, 1]
+        self.dice_held = [False] * 5
+        self.selected_die = 0
+        self.rolls_left = 3
+        self.turn = 0
+        
+        # Click system
+        self.left_hold_timer = 0.0
+        self.left_hold_threshold = 0.5
+        self.click_registered = False
+        
+        # Spinner control - SENSIBILITÀ DIVERSE PER FASE
+        self.spinner_accumulator = 9000000000
+        self.spinner_roll_threshold = 10  # AUMENTATO: serve più rotazione per lanciare
+        self.spinner_select_threshold = 1.2 # ABBASSATO: rotazione minima per cambiare selezione
+        self.can_roll = True
+        self.roll_cooldown = 0
+        
+        # Scoring
+        self.scores = {}
+        self.upper_total = 0
+        self.upper_bonus = 0
+        self.lower_total = 0
+        self.selected_category = 0
+        
+        # State machine
+        self.phase = 'roll'
+        self.paused = False
+        self.roll_animation = 0
+        
+        # Visual
+        self.particles = []
+        self.floating_texts = []
+        self.screen_shake = 0
+        self.time = 0
+        self.bg_wave = 0
+        
+        # Fonts
+        self.font_huge = pygame.font.Font(None, 68)
+        self.font_large = pygame.font.Font(None, 48)
+        self.font_medium = pygame.font.Font(None, 36)
+        self.font_small = pygame.font.Font(None, 26)
+        self.font_tiny = pygame.font.Font(None, 19)
+        self.font_pause = pygame.font.Font(None, 80)
+        
+        self.reset()
+    
+    def get_name(self) -> str:
+        return "Yahtzee Spinner"
+    
+    def get_description(self) -> str:
+        return "Spin to roll! Click to hold! Hold to confirm!"
+    
+    def reset(self):
+        self.score = 0
+        self.game_over = False
+        self.dice = [random.randint(1, 6) for _ in range(5)]
+        self.dice_held = [False] * 5
+        self.selected_die = 0
+        self.rolls_left = 3
+        self.turn = 0
+        self.left_hold_timer = 0.0
+        self.click_registered = False
+        self.spinner_accumulator = 0
+        self.can_roll = True
+        self.roll_cooldown = 0
+        self.scores = {}
+        self.upper_total = 0
+        self.upper_bonus = 0
+        self.lower_total = 0
+        self.selected_category = 0
+        self.phase = 'roll'
+        self.paused = False
+        self.roll_animation = 0
+        self.particles = []
+        self.floating_texts = []
+        self.screen_shake = 0
+        self.time = 0
+        self.bg_wave = 0
+    
+    def roll_dice(self):
+        """Lancia dadi non held"""
+        if not self.can_roll or self.roll_animation > 0:
+            return
+        
+        rolled_any = False
+        for i in range(5):
+            if not self.dice_held[i]:
+                self.dice[i] = random.randint(1, 6)
+                rolled_any = True
+        
+        if not rolled_any:
+            return
+        
+        self.rolls_left -= 1
+        self.roll_animation = 0.7
+        self.can_roll = False
+        self.roll_cooldown = 0.8
+        self.spinner_accumulator = 0
+        
+        if self.synth:
+            self.synth.create_score_point().play()
+        
+        self.create_particles(640, 420, (255, 255, 100), 30)
+        self.screen_shake = 0.25
+        
+        # Dopo lancio
+        if self.rolls_left > 0:
+            self.phase = 'selecting'
+            self.selected_die = 0
+        else:
+            # Finiti i lanci → scoring
+            self.phase = 'scoring'
+            self.selected_category = 0
+    
+   
+    
+    def calculate_score(self, cat_id: str, dice: List[int]) -> int:
+        counts = [0] * 7
+        for d in dice:
+            counts[d] += 1
+        
+        if cat_id == 'ones': return counts[1] * 1
+        if cat_id == 'twos': return counts[2] * 2
+        if cat_id == 'threes': return counts[3] * 3
+        if cat_id == 'fours': return counts[4] * 4
+        if cat_id == 'fives': return counts[5] * 5
+        if cat_id == 'sixes': return counts[6] * 6
+        
+        total = sum(dice)
+        
+        if cat_id == 'three_kind':
+            return total if max(counts) >= 3 else 0
+        if cat_id == 'four_kind':
+            return total if max(counts) >= 4 else 0
+        if cat_id == 'full_house':
+            return 25 if (3 in counts and 2 in counts) else 0
+        if cat_id == 'sm_straight':
+            s = sorted(set(dice))
+            for i in range(len(s) - 3):
+                if s[i:i+4] == list(range(s[i], s[i] + 4)):
+                    return 30
+            return 0
+        if cat_id == 'lg_straight':
+            s = sorted(dice)
+            if s == [1,2,3,4,5] or s == [2,3,4,5,6]:
+                return 40
+            return 0
+        if cat_id == 'yahtzee':
+            return 50 if max(counts) == 5 else 0
+        if cat_id == 'chance':
+            return total
+        
+        return 0
+    
+    def score_category(self, cat_id: str):
+        if cat_id in self.scores:
+            return
+        
+        points = self.calculate_score(cat_id, self.dice)
+        self.scores[cat_id] = points
+        
+        is_upper = [c for c in self.CATEGORIES if c[0] == cat_id][0][2]
+        if is_upper:
+            self.upper_total += points
+            if self.upper_total >= 63 and self.upper_bonus == 0:
+                self.upper_bonus = 35
+                self.create_floating_text(640, 300, "BONUS +35!", (255, 215, 0))
+                if self.synth:
+                    self.synth.create_high_score().play()
+        else:
+            self.lower_total += points
+            if cat_id == 'yahtzee' and points == 50:
+                self.create_floating_text(640, 360, "YAHTZEE!!!", (255, 50, 50))
+                self.screen_shake = 0.6
+                if self.synth:
+                    self.synth.create_level_complete().play()
+        
+        self.score = self.upper_total + self.upper_bonus + self.lower_total
+        
+        if self.synth:
+            self.synth.create_powerup().play()
+        
+        # Prossimo turno
+        self.turn += 1
+        if self.turn >= 13:
+            self.game_over = True
+            if self.synth:
+                self.synth.create_game_over().play()
+        else:
+            self.rolls_left = 3
+            self.dice_held = [False] * 5
+            self.phase = 'roll'
+            self.can_roll = True
+    
+    def create_particles(self, x: float, y: float, color: tuple, count: int):
+        for _ in range(count):
+            angle = random.uniform(0, math.pi * 2)
+            speed = random.uniform(120, 300)
+            self.particles.append({
+                'x': x, 'y': y,
+                'vx': math.cos(angle) * speed,
+                'vy': math.sin(angle) * speed,
+                'life': random.uniform(0.5, 1.2),
+                'max_life': 1.2,
+                'color': color,
+                'size': random.uniform(3, 8)
+            })
+    
+    def create_floating_text(self, x: float, y: float, text: str, color: tuple):
+        self.floating_texts.append({
+            'x': x, 'y': y, 'text': text, 'color': color,
+            'life': 2.5, 'vy': -50
+        })
+    
+
+
+
+
+
+
+
+
+
+
+    def update(self, dt: float, spinner_delta: float, spinner) -> bool:
+        if self.game_over:
+            return not spinner.is_right_clicked()
+        
+        self.time += dt
+        self.bg_wave += dt * 0.5
+        
+        # Pause
+        if spinner.is_right_clicked() and not self.paused:
+            self.paused = True
+            return True
+        
+        if self.paused:
+            if spinner.is_left_clicked():
+                if self.synth:
+                    self.synth.create_back().play()
+                self.game_over = True
+                return False
+            if spinner.is_right_clicked():
+                self.paused = False
+                if self.synth:
+                    self.synth.create_select().play()
+            return True
+        
+        # Animazioni
+        if self.roll_animation > 0:
+            self.roll_animation -= dt
+        
+        if self.roll_cooldown > 0:
+            self.roll_cooldown -= dt
+            if self.roll_cooldown <= 0:
+                self.can_roll = True
+        
+        # === FASE: ROLL ===
+        if self.phase == 'roll':
+            # Spinner LENTO per lanciare (serve più rotazione)
+            if self.can_roll and abs(spinner_delta) > 3:
+                self.spinner_accumulator += abs(spinner_delta)/10
+                
+                if self.spinner_accumulator >= self.spinner_roll_threshold:
+                    self.roll_dice()
+        
+        elif self.phase == 'selecting':
+            # ✅ SPINNER NATURALE CON ACCUMULATORE (FLUIDO)
+            self.spinner_accumulator += spinner_delta * 0.5  # Moltiplicatore per sensibilità
+            
+            while abs(self.spinner_accumulator) >= self.spinner_select_threshold:
+                direction = 1 if self.spinner_accumulator > 0 else -1
+                old = self.selected_die
+                self.selected_die = (self.selected_die + direction) % 5
+                
+                if old != self.selected_die and self.synth:
+                    self.synth.create_wall_bounce().play()
+                    self.create_particles(90 + self.selected_die * 220 + 70, 420 + 70, (255, 255, 100), 15)
+                
+                self.spinner_accumulator -= direction * self.spinner_select_threshold  # Rimuovi step consumato
+            
+            # Sistema click INALTERATO (copia/incolla il resto identico)
+            left_pressed = pygame.mouse.get_pressed()[0]
+            
+            if left_pressed:
+                self.left_hold_timer += dt
+                
+                # Hold completato → CONFERMA
+                if self.left_hold_timer >= self.left_hold_threshold:
+                    if self.rolls_left > 0 and not all(self.dice_held):
+                        self.phase = 'roll'
+                    else:
+                        self.phase = 'scoring'
+                        self.selected_category = 0
+                    
+                    self.left_hold_timer = 0.0
+                    self.click_registered = False
+                    if self.synth:
+                        self.synth.create_select().play()
+                    self.create_particles(640, 620, (100, 255, 255), 35)
+                
+                elif self.left_hold_timer < 0.2 and not self.click_registered:
+                    self.click_registered = True
+
+            else:
+                # Rilasciato
+                if 0 < self.left_hold_timer < self.left_hold_threshold:
+                    if self.click_registered:
+                        self.dice_held[self.selected_die] = not self.dice_held[self.selected_die]
+                        if self.synth:
+                            sound = self.synth.create_powerup() if self.dice_held[self.selected_die] else self.synth.create_hit()
+                            sound.play()
+                        
+                        die_x = 90 + self.selected_die * 220
+                        die_y = 420
+                        self.create_particles(die_x + 70, die_y + 70, 
+                                            (100, 255, 100) if self.dice_held[self.selected_die] else (255, 150, 150), 20)
+                        
+                        if all(self.dice_held):
+                            if self.synth:
+                                self.synth.create_select().play()
+                
+                self.left_hold_timer = 0.0
+                self.click_registered = False
+
+
+
+
+                
+        elif self.phase == 'scoring':
+            # ✅ SPINNER NATURALE CON ACCUMULATORE (FLUIDO - IDENTICO selecting)
+            self.spinner_accumulator += spinner_delta * 0.5  # Sensibilità regolabile
+            
+            while abs(self.spinner_accumulator) >= self.spinner_select_threshold:
+                direction = 1 if self.spinner_accumulator > 0 else -1
+                old = self.selected_category
+                self.selected_category = (self.selected_category + direction) % 13
+                
+                if old != self.selected_category and self.synth:
+                    self.synth.create_wall_bounce().play()
+                    # Particelle opzionali per feedback visivo
+                    self.create_particles(640, 200 + self.selected_category * 30, (255, 255, 100), 12)
+                
+                self.spinner_accumulator -= direction * self.spinner_select_threshold
+            
+            # Click conferma INALTERATO
+            if spinner.is_left_clicked():
+                cat_id = self.CATEGORIES[self.selected_category][0]
+                if cat_id not in self.scores:
+                    self.score_category(cat_id)
+                    if self.synth:
+                        self.synth.create_select().play()
+                    self.create_particles(640, 300, (100, 255, 255), 25)
+                    # Transizione automatica? self.phase = 'next_turn' o simile
+
+        # Update effects
+        for p in self.particles[:]:
+            p['x'] += p['vx'] * dt
+            p['y'] += p['vy'] * dt
+            p['vy'] += 500 * dt
+            p['life'] -= dt
+            if p['life'] <= 0:
+                self.particles.remove(p)
+        
+        for ft in self.floating_texts[:]:
+            ft['y'] += ft['vy'] * dt
+            ft['life'] -= dt
+            if ft['life'] <= 0:
+                self.floating_texts.remove(ft)
+        
+        if self.screen_shake > 0:
+            self.screen_shake -= dt
+        
+        return True
+    
+
+
+    def _draw_scorecard(self, surface, sx, sy):
+        """Scorecard minimale ultra-compatta: griglia pulita, spazi ottimizzati, hover azzurro"""
+        
+        # Dimensioni compatte (ridotta altezza a 310)
+        card_w, card_h = 780, 310
+        x = (1280 - card_w) // 2 + sx
+        y = 120 + sy
+        
+        # Sfondo pulito
+        main_rect = pygame.Rect(x, y, card_w, card_h)
+        pygame.draw.rect(surface, (255, 255, 255), main_rect)
+        pygame.draw.rect(surface, (0, 0, 0), main_rect, 2)
+        
+        # Header minimo
+        title_surf = self.font_small.render("YAHTZEE", True, (20, 20, 20))
+        surface.blit(title_surf, (x + card_w//2 - title_surf.get_width()//2, y + 8))
+        pygame.draw.line(surface, (100, 100, 100), (x + 15, y + 28), (x + card_w - 15, y + 28), 1)
+        
+        # Colonne ottimizzate (3 colonne compatte)
+        col1_x = x + 25        # Categoria (compatta)
+        col1_w = 140
+        col2_x = x + 175       # Descrizione (media)
+        col2_w = 400
+        col3_x = x + 585       # Score (stretta)
+        col3_w = 170
+        
+        # Header colonne (font piccolo, compatto)
+        header_y = y + 32
+        h1 = self.font_tiny.render("CAT", True, (60, 60, 60))
+        h2 = self.font_tiny.render("DESCRIPTION", True, (60, 60, 60))
+        h3 = self.font_tiny.render("SCORE", True, (60, 60, 60))
+        surface.blit(h1, (col1_x + 10, header_y))
+        surface.blit(h2, (col2_x + 10, header_y))
+        surface.blit(h3, (col3_x + 50, header_y))
+        
+        # Linee griglia verticali sottili
+        pygame.draw.line(surface, (220, 220, 220), (col1_x + col1_w, y + 28), (col1_x + col1_w, y + card_h - 35), 1)
+        pygame.draw.line(surface, (220, 220, 220), (col2_x + col2_w, y + 28), (col2_x + col2_w, y + card_h - 35), 1)
+        
+        # Righe compattissime (row_height ridotta a 18px)
+        row_start_y = y + 50
+        row_h = 18
+        
+        # Descrizioni abbreviate
+        desc_map = {
+            'ones': 'Sum of 1s', 'twos': 'Sum of 2s', 'threes': 'Sum of 3s',
+            'fours': 'Sum of 4s', 'fives': 'Sum of 5s', 'sixes': 'Sum of 6s',
+            'three_kind': 'Three of a kind', 'four_kind': 'Four of a kind',
+            'full_house': 'Full House (25pts)', 'small_straight': 'Small Straight (30pts)',
+            'large_straight': 'Large Straight (40pts)', 'yahtzee': 'YAHTZEE! (50pts)',
+            'chance': 'Chance (sum all)'
+        }
+        
+        for idx, (cat_id, cat_name, is_upper) in enumerate(self.CATEGORIES):
+            row_y = row_start_y + idx * row_h
+            
+            # Righe alternate leggere
+            if idx % 2 == 1:
+                pygame.draw.rect(surface, (248, 248, 248), (x + 15, row_y, card_w - 30, row_h))
+            
+            # Hover azzurro con pulse
+            if self.phase == 'scoring' and idx == self.selected_category:
+                pulse = 0.7 + 0.3 * abs(math.sin(self.time * 5))
+                highlight_col = (220, 240, 255)
+                pygame.draw.rect(surface, highlight_col, (x + 15, row_y, card_w - 30, row_h))
+                pygame.draw.rect(surface, (70, 130, 200), (x + 15, row_y, card_w - 30, row_h), 2)
+            
+
+            
+            row_text_y = row_y + (row_h - self.font_tiny.get_height())//2
+            
+            # Categoria nome
+            cat_col = (80, 80, 80) if cat_id not in self.scores else (160, 160, 160)
+            cat_surf = self.font_tiny.render(cat_name.upper(), True, cat_col)
+            surface.blit(cat_surf, (col1_x + 10, row_text_y))
+            
+            # Descrizione
+            desc_surf = self.font_tiny.render(desc_map.get(cat_id, ''), True, (100, 100, 100))
+            surface.blit(desc_surf, (col2_x + 10, row_text_y))
+            
+            # Score box compatto
+            if cat_id in self.scores:
+                pts = self.scores[cat_id]
+                pts_col = (10, 130, 10)
+                bg_col = (240, 255, 240)
+            else:
+                pts = self.calculate_score(cat_id, self.dice)
+                pts_col = (0, 90, 180) if pts > 0 else (170, 170, 170)
+                bg_col = (245, 250, 255) if pts > 0 else (250, 250, 250)
+            
+            pts_surf = self.font_tiny.render(str(pts), True, pts_col)
+            pts_box_w = max(50, pts_surf.get_width() + 16)
+            pts_box = pygame.Rect(col3_x + col3_w - pts_box_w - 10, row_y + 2, pts_box_w, row_h - 4)
+            pygame.draw.rect(surface, bg_col, pts_box)
+            pygame.draw.rect(surface, pts_col, pts_box, 1)
+            surface.blit(pts_surf, (pts_box.centerx - pts_surf.get_width()//2, row_text_y))
+        
+        # Bonus ultra-compatto
+        bonus_y = row_start_y + 13 * row_h + 8
+        pygame.draw.line(surface, (100, 100, 100), (x + 15, bonus_y - 3), (x + card_w - 15, bonus_y - 3), 1)
+        
+        if self.upper_bonus > 0:
+            bonus_surf = self.font_small.render(f"UPPER BONUS: +{self.upper_bonus}", True, (30, 30, 30))
+            bonus_x = x + card_w//2 - bonus_surf.get_width()//2
+            bonus_bg = pygame.Rect(bonus_x - 12, bonus_y, bonus_surf.get_width() + 24, 20)
+            pygame.draw.rect(surface, (255, 240, 200), bonus_bg)
+            pygame.draw.rect(surface, (200, 160, 80), bonus_bg, 2)
+            surface.blit(bonus_surf, (bonus_x, bonus_y + 2))
+        
+        # Totale compatto bottom-right
+        total = sum(self.scores.values())
+        total_surf = self.font_small.render(f"TOTAL: {total}", True, (40, 40, 40))
+        surface.blit(total_surf, (x + card_w - total_surf.get_width() - 25, y + card_h - 22))
+
+
+
+
+
+
+
+
+
+
+
+    def _draw_background(self, surface):
+        surface.fill((12, 18, 32))
+        for y in range(0, 720, 3):
+            wave = math.sin(self.bg_wave + y * 0.006) * 12
+            r = int(12 + wave)
+            g = int(18 + wave * 0.9)
+            b = int(32 + wave * 1.1)
+            pygame.draw.line(surface, (max(0,r), max(0,g), max(0,b)), (0, y), (1280, y), 3)
+    
+
+
+
+
+
+
+
+
+
+
+
+
+    def draw(self, surface: pygame.Surface):
+        shake_x, shake_y = 0, 0
+        if self.screen_shake > 0:
+            shake_x = random.randint(-6, 6)
+            shake_y = random.randint(-6, 6)
+        
+        self._draw_background(surface)
+        self._draw_hud(surface)
+        self._draw_scorecard(surface, shake_x, shake_y)
+        self._draw_phase_indicator(surface)
+        self._draw_dice(surface, shake_x, shake_y)
+        self._draw_particles(surface, shake_x, shake_y)
+        self._draw_floating_texts(surface)
+        
+        if self.paused:
+            self._draw_pause(surface)
+        elif self.game_over:
+            self._draw_game_over(surface)
+    
+
+
+
+
+
+    def _draw_hud(self, surface):
+        turn = self.font_small.render(f"Turn {self.turn+1}/13", True, (180, 200, 255))
+        surface.blit(turn, (25, 20))
+        
+        rolls_col = (120, 255, 120) if self.rolls_left > 0 else (255, 120, 120)
+        rolls = self.font_small.render(f"Rolls: {self.rolls_left}/3", True, rolls_col)
+        surface.blit(rolls, (25, 48))
+        
+        score = self.font_large.render(f"SCORE: {self.score}", True, (255, 255, 100))
+        surface.blit(score, (640 - score.get_width()//2, 18))
+            
+
+
+
+
+
+
+
+    def _draw_phase_indicator(self, surface):
+        """Indicatore fase IN ALTO subito sotto score"""
+        y = 75  # Posizione sotto SCORE (18+48+gap=~75px)
+        
+        if self.phase == 'roll':
+            txt = "SPIN TO ROLL DICE"
+            col = (100, 255, 255)
+        elif self.phase == 'selecting':
+            txt = "SPIN: SELECT • CLICK: TOGGLE • HOLD 2.5s: CONFIRM"
+            col = (255, 200, 100)
+        else:
+            txt = "SPIN: SELECT CATEGORY • CLICK: CONFIRM"
+            col = (255, 150, 255)
+        
+        text_surf = self.font_small.render(txt, True, col)
+        surface.blit(text_surf, (640 - text_surf.get_width()//2, y))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    def _draw_dice(self, surface, sx, sy):
+        """Progress SOTTO dadi (visibile), istruzioni SOPRA dadi ben disegnate"""
+        
+        dice_y = 540 + sy  # Dadi 540-680px
+        
+        # ISTRUZIONI SOPRA DADI (ben disegnate, 480-510px)
+        if self.phase == 'roll' and self.can_roll:
+            # Roll instructions box elegante
+            instr_w, instr_h = 500, 28
+            instr_x = 640 - instr_w // 2 + sx
+            instr_y = dice_y - 55 + sy  # 55px sopra dadi
+            
+            # BG gradient soft
+            pygame.draw.rect(surface, (240, 245, 255), (instr_x, instr_y, instr_w, instr_h), 0, 16)
+            pygame.draw.rect(surface, (100, 140, 200), (instr_x, instr_y, instr_w, instr_h), 2, 16)
+            
+            txt = self.font_small.render("SPIN TO ROLL!", True, (30, 50, 100))
+            surface.blit(txt, (instr_x + instr_w//2 - txt.get_width()//2, instr_y + 6))
+        
+        elif self.phase == 'selecting':
+            # Hold instructions box
+            instr_w, instr_h = 520, 30
+            instr_x = 640 - instr_w // 2 + sx
+            instr_y = dice_y - 55 + sy
+            
+            pygame.draw.rect(surface, (250, 245, 255), (instr_x, instr_y, instr_w, instr_h), 0, 16)
+            pygame.draw.rect(surface, (120, 160, 220), (instr_x, instr_y, instr_w, instr_h), 2, 16)
+            
+            txt = self.font_small.render("HOLD LEFT 2.5s or all dice → CONTINUE", True, (40, 60, 120))
+            surface.blit(txt, (instr_x + instr_w//2 - txt.get_width()//2, instr_y + 6))
+        
+        # PROGRESS BAR SOTTO DADI (vicina, 690-715px visibile)
+        if self.phase == 'roll' and self.can_roll:
+            bar_w, bar_h = 400, 22  # Compatta sotto
+            bar_x = 640 - bar_w // 2 + sx
+            bar_y = dice_y + 145 + sy  # Subito sotto dadi (140+5px)
+            
+            pygame.draw.rect(surface, (30, 35, 50), (bar_x, bar_y, bar_w, bar_h), 0, 12)
+            
+            progress = min(1.0, self.spinner_accumulator / self.spinner_roll_threshold)
+            fill_w = int(bar_w * progress)
+            if fill_w > 0:
+                if progress < 0.33: col = (255, 100, 100)
+                elif progress < 0.66: col = (255, 200, 100)
+                else: col = (100, 255, 100)
+                pygame.draw.rect(surface, col, (bar_x + 2, bar_y + 2, fill_w - 2, bar_h - 4), 0, 10)
+            
+            pygame.draw.rect(surface, (130, 140, 170), (bar_x, bar_y, bar_w, bar_h), 2, 12)
+            pct_txt = self.font_tiny.render(f"{int(progress*100)}%", True, (255, 255, 255))
+            surface.blit(pct_txt, (bar_x + bar_w//2 - pct_txt.get_width()//2, bar_y + 5))
+        
+        elif self.phase == 'selecting' and self.left_hold_timer > 0:
+            # Hold progress sotto
+            bar_w, bar_h = 420, 24
+            bar_x = 640 - bar_w // 2 + sx
+            bar_y = dice_y + 145 + sy
+            
+            pygame.draw.rect(surface, (35, 40, 55), (bar_x, bar_y, bar_w, bar_h), 0, 12)
+            
+            progress = min(1.0, self.left_hold_timer / self.left_hold_threshold)
+            fill_w = int(bar_w * progress)
+            grad_col = (100, int(255 - 55*progress), 255)
+            pygame.draw.rect(surface, grad_col, (bar_x + 2, bar_y + 2, fill_w - 2, bar_h - 4), 0, 10)
+            
+            pygame.draw.rect(surface, (140, 150, 180), (bar_x, bar_y, bar_w, bar_h), 2, 12)
+            pct_txt = self.font_tiny.render(f"HOLD {int(progress*100)}%", True, (255, 255, 255))
+            surface.blit(pct_txt, (bar_x + bar_w//2 - pct_txt.get_width()//2, bar_y + 4))
+        
+        # Dadi centrati invariati
+        dice_spacing = 200
+        start_x = 640 - (4 * dice_spacing // 2) - 70 + sx
+        for i in range(5):
+            x = start_x + i * dice_spacing
+            y = dice_y
+            
+            rect = pygame.Rect(x, y, 140, 140)
+            
+            if self.phase == 'selecting' and i == self.selected_die:
+                glow_rect = pygame.Rect(x - 8, y - 8, 156, 156)
+                pulse = abs(math.sin(self.time * 6)) * 15
+                pygame.draw.rect(surface, (255, 255, int(100 + pulse)), glow_rect, 6, 22)
+            
+            if self.dice_held[i]:
+                bg_col = (60, 140, 60); border_col = (100, 240, 100); border_w = 5
+            else:
+                bg_col = (35, 45, 65); border_col = (70, 85, 110); border_w = 3
+            
+            pygame.draw.rect(surface, bg_col, rect, 0, 18)
+            pygame.draw.rect(surface, border_col, rect, border_w, 18)
+            
+            if self.dice_held[i]:
+                held = self.font_small.render("HELD", True, (180, 255, 180))
+                surface.blit(held, (x + 70 - held.get_width()//2, y - 32))
+            
+            self._draw_die_face(surface, x + 70, y + 70, self.dice[i])
+            num = self.font_tiny.render(str(i+1), True, (130, 130, 150))
+            surface.blit(num, (x + 10, y + 10))
+
+    
+
+
+
+
+
+
+
+    def _draw_die_face(self, surface, cx, cy, value):
+        pips = {
+            1: [(0, 0)],
+            2: [(-30, -30), (30, 30)],
+            3: [(-30, -30), (0, 0), (30, 30)],
+            4: [(-30, -30), (30, -30), (-30, 30), (30, 30)],
+            5: [(-30, -30), (30, -30), (0, 0), (-30, 30), (30, 30)],
+            6: [(-30, -30), (30, -30), (-30, 0), (30, 0), (-30, 30), (30, 30)]
+        }
+        for px, py in pips[value]:
+            pygame.draw.circle(surface, (255, 255, 255), (int(cx+px), int(cy+py)), 12)
+            pygame.draw.circle(surface, (210, 210, 210), (int(cx+px), int(cy+py)), 12, 2)
+    
+
+
+
+
+
+    def _draw_particles(self, surface, sx, sy):
+        for p in self.particles:
+            alpha = int(255 * (p['life'] / p['max_life']))
+            size = int(p['size'])
+            surf = pygame.Surface((size*2, size*2), pygame.SRCALPHA)
+            pygame.draw.circle(surf, (*p['color'], alpha), (size, size), size)
+            surface.blit(surf, (int(p['x']-size+sx), int(p['y']-size+sy)))
+    
+    def _draw_floating_texts(self, surface):
+        for ft in self.floating_texts:
+            alpha = int(255 * (ft['life'] / 2.5))
+            txt = self.font_large.render(ft['text'], True, ft['color'])
+            txt.set_alpha(alpha)
+            surface.blit(txt, (int(ft['x'] - txt.get_width()//2), int(ft['y'])))
+    
+    def _draw_pause(self, surface):
+        overlay = pygame.Surface((1280, 720))
+        overlay.fill((0, 0, 0))
+        overlay.set_alpha(210)
+        surface.blit(overlay, (0, 0))
+        
+        txt = self.font_pause.render("PAUSED", True, (255, 255, 255))
+        surface.blit(txt, (640 - txt.get_width()//2, 260))
+        
+        exit_txt = self.font_medium.render("LEFT CLICK - Exit", True, (255, 100, 100))
+        cont_txt = self.font_medium.render("RIGHT CLICK - Continue", True, (100, 255, 100))
+        surface.blit(exit_txt, (640 - exit_txt.get_width()//2, 400))
+        surface.blit(cont_txt, (640 - cont_txt.get_width()//2, 450))
+    
+    def _draw_game_over(self, surface):
+        overlay = pygame.Surface((1280, 720))
+        overlay.fill((0, 0, 0))
+        overlay.set_alpha(230)
+        surface.blit(overlay, (0, 0))
+        
+        title = self.font_pause.render("GAME OVER!", True, (255, 215, 0))
+        surface.blit(title, (640 - title.get_width()//2, 220))
+        
+        final = self.font_huge.render(f"{self.score}", True, (255, 255, 100))
+        surface.blit(final, (640 - final.get_width()//2, 320))
+        
+        upper = self.font_small.render(f"Upper: {self.upper_total} + Bonus: {self.upper_bonus}", 
+                                       True, (190, 190, 255))
+        lower = self.font_small.render(f"Lower: {self.lower_total}", True, (190, 190, 255))
+        surface.blit(upper, (640 - upper.get_width()//2, 430))
+        surface.blit(lower, (640 - lower.get_width()//2, 465))
+        
+        hint = self.font_small.render("RIGHT CLICK to continue", True, (170, 170, 170))
+        surface.blit(hint, (640 - hint.get_width()//2, 580))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         
 class PongSpinner(MiniGame):
     def __init__(self, synth: SoundSynthesizer):
@@ -8774,8 +9607,9 @@ class GameManager:
                 BreakoutSpinner(self.synth),
                 MissileCommander(self.synth),
                 SpinnerDefense(self.synth),
+                PongSpinner(self.synth),
                 Kaleidoscope(self.synth),
-                PongSpinner(self.synth)
+                YahtzeeSpinner(self.synth)
             ]
         return self._game_instances
     
