@@ -46,3 +46,4 @@ pip install pygame numpy
 
 # Run the game
 python main.py
+<img width="1275" height="719" alt="image" src="https://github.com/user-attachments/assets/ffbd4224-6c08-4812-a9ce-fae1a98ffc9c" />
