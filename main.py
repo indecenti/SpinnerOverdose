@@ -4052,41 +4052,97 @@ class YahtzeeSpinner(MiniGame):
         self.time = 0
         self.bg_wave = 0
         
+
+
+
+
+
+
+
+
+            
     def roll_dice(self):
-        """Lancia dadi non held - CORRETTO"""
+        """Lancia dadi non held - HIGH ENTROPY + FEEDBACK VISIVO"""
         if not self.can_roll or self.roll_animation > 0:
             return
         
+        # 🔧 MAX ENTROPIA: seme unico per ogni roll
+        import time
+        import os
+        random.seed(time.time_ns() ^ os.urandom(2).__hash__() ^ self.turn)
+        
         rolled_any = False
+        free_dice_indices = []
+        
+        print(f"🔄 Roll {4-self.rolls_left+1}/3 - Held: {self.dice_held}")
+        
         for i in range(5):
             if not self.dice_held[i]:
-                self.dice[i] = random.randint(1, 6)
+                old_value = self.dice[i]
+                
+                # 🔥 HIGH ENTROPY: rigetta se uguale (95% cambia subito)
+                new_value = old_value
+                attempts = 0
+                while new_value == old_value and attempts < 8:
+                    new_value = random.randint(1, 6)
+                    attempts += 1
+                
+                # Forza cambio se ancora uguale (raro)
+                if new_value == old_value:
+                    new_value = (old_value % 6) + 1
+                
+                self.dice[i] = new_value
+                free_dice_indices.append(i)
                 rolled_any = True
+                print(f"  Dado {i}: {old_value}→{new_value} (attempts:{attempts})")
         
         if not rolled_any:
+            print("⚠️ Nessun dado libero")
             return
         
+        print(f"✅ Risultato: {[self.dice[j] for j in free_dice_indices]}")
+        
+        # Salva per flash visivo
+        self.changed_dice = free_dice_indices
+        self.flash_timer = 1.0
+        
+        # Stato aggiornato
         self.rolls_left -= 1
-        self.roll_animation = 0.7
+        self.roll_animation = 0.3  # Più veloce
         self.can_roll = False
-        self.roll_cooldown = 0.8
+        self.roll_cooldown = 0.5
         self.spinner_accumulator = 0
+        
+        # Effetti proporzionali
+        particles = 20 + len(free_dice_indices) * 15
+        self.create_particles(640, 420, (255, 255, 100), particles)
+        self.screen_shake = min(0.2 + len(free_dice_indices)*0.08, 0.4)
         
         if self.synth:
             self.synth.create_score_point().play()
         
-        self.create_particles(640, 420, (255, 255, 100), 30)
-        self.screen_shake = 0.25
-        
-        # CORREZIONE: Logica invertita sistemata
+        # Prossima fase
         if self.rolls_left == 0:
-            # Finiti i lanci → vai direttamente a scoring
+            print("🎯 → SCORING")
             self.phase = 'scoring'
             self.selected_category = 0
         else:
-            # Lanci disponibili → torna a selecting (per scegliere hold)
+            print("🔄 → SELECTING")
             self.phase = 'selecting'
             self.selected_die = 0
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     def new_turn(self):
         """Inizia nuovo turno dopo aver scelto categoria"""
@@ -4097,7 +4153,6 @@ class YahtzeeSpinner(MiniGame):
         self.roll_animation = 0
         self.roll_cooldown = 0
         self.selected_die = 0
-        self.turn += 1  # ← AGGIUNTO: questo era il problema principale!
 
     def calculate_score(self, cat_id: str, dice: List[int]) -> int:
         counts = [0] * 7
@@ -4142,7 +4197,8 @@ class YahtzeeSpinner(MiniGame):
     def score_category(self, cat_id: str):
         if cat_id in self.scores:
             return
-        
+        self.turn += 1  # ← AGGIUNTO: questo era il problema principale!
+
         points = self.calculate_score(cat_id, self.dice)
         self.scores[cat_id] = points
         
@@ -5311,6 +5367,969 @@ class YahtzeeSpinner(MiniGame):
         hint = self.font_small.render("RIGHT CLICK to continue", True, (170, 170, 170))
         surface.blit(hint, (640 - hint.get_width()//2, 580))
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+class SpinDuel(MiniGame):
+    """
+    SPIN DUEL - Spinner-based arcade combat game
+
+    CONTROLS:
+    - Spinner: Rotazione lama (velocità/direzione)
+    - Left Click (breve): Parata difensiva
+    - Left Click (hold): Carica energia
+    - Left Click (release): Colpo potente
+    - Right Click: Pausa
+
+    MECHANICS:
+    - Blade inertia system (fisica realistica)
+    - Energy management (attack/defense)
+    - AI opponent with adaptive difficulty
+    - Hit detection based on blade speed/angle
+    """
+
+    # Stati di gioco
+    STATE_INTRO = 'intro'
+    STATE_FIGHT = 'fight'
+    STATE_ROUND_END = 'round_end'
+    STATE_GAME_OVER = 'game_over'
+    STATE_PAUSED = 'paused'
+
+    def __init__(self, synth=None):
+        """Inizializzazione gioco"""
+        self.synth = synth
+
+        # === SPINNER SYSTEM ===
+        self.spinner_accumulator = 0.0
+        self.spinner_velocity = 0.0  # Velocità attuale spinner (con inerzia)
+        self.spinner_angle = 0.0  # Angolo corrente lama (0-360°)
+        self.spinner_friction = 0.92  # Decadimento velocità
+        self.spinner_sensitivity = 0.08  # Sensibilità input
+        self.last_spinner_direction = 1  # Traccia direzione per inversioni
+
+        # === PLAYER BLADE ===
+        self.player_x = 400  # Posizione X giocatore
+        self.player_y = 360  # Posizione Y giocatore
+        self.player_blade_length = 80  # Lunghezza base lama
+        self.player_blade_speed = 0.0  # Velocità rotazione lama
+        self.player_energy = 100.0  # Energia/vita giocatore
+        self.player_max_energy = 100.0
+        self.player_charge = 0.0  # Carica attacco potente (0-1)
+        self.player_is_parrying = False  # Stato parata
+        self.player_parry_cooldown = 0.0  # Cooldown parata
+        self.player_stagger = 0.0  # Stun temporaneo da colpo
+
+        # === AI OPPONENT ===
+        self.ai_x = 880  # Posizione X AI
+        self.ai_y = 360  # Posizione Y AI
+        self.ai_blade_length = 80
+        self.ai_blade_speed = 0.0
+        self.ai_blade_angle = 180.0  # Parte da angolo opposto
+        self.ai_energy = 100.0
+        self.ai_max_energy = 100.0
+        self.ai_state = 'observe'  # observe, attack, defend, feint
+        self.ai_timer = 0.0  # Timer per cambio stato
+        self.ai_difficulty = 1.0  # Moltiplicatore difficoltà (1.0-3.0)
+        self.ai_charge = 0.0
+        self.ai_stagger = 0.0
+
+        # === COMBAT SYSTEM ===
+        self.click_timer = 0.0  # Timer per hold detection
+        self.click_threshold = 0.4  # Tempo per considerare "hold"
+        self.is_clicking = False
+        self.charge_power_min = 20  # Danno minimo carica
+        self.charge_power_max = 40  # Danno massimo carica
+        self.parry_window = 0.15  # Finestra temporale parata perfetta
+        self.hit_cooldown_player = 0.0  # Cooldown tra colpi
+        self.hit_cooldown_ai = 0.0
+
+        # === GAME STATE ===
+        self.state = self.STATE_INTRO
+        self.round = 1
+        self.max_rounds = 3
+        self.player_wins = 0
+        self.ai_wins = 0
+        self.paused = False
+        self.game_over = False
+        self.score = 0  # Score per MiniGame interface
+
+        # === VISUAL EFFECTS ===
+        self.particles = []
+        self.floating_texts = []
+        self.screen_shake = 0.0
+        self.time = 0.0
+        self.bg_wave = 0.0
+        self.flash_white = 0.0  # Flash schermo su colpo critico
+        self.slow_motion = 1.0  # Slow-mo effect (1.0 = normale)
+
+        # === FONTS ===
+        self.font_huge = pygame.font.Font(None, 88)
+        self.font_large = pygame.font.Font(None, 56)
+        self.font_medium = pygame.font.Font(None, 42)
+        self.font_small = pygame.font.Font(None, 32)
+        self.font_tiny = pygame.font.Font(None, 22)
+
+        self.reset()
+
+    def get_name(self) -> str:
+        return "⚔️ SPIN DUEL"
+
+    def get_description(self) -> str:
+        return "Spin to fight! Click to parry! Hold to charge!"
+
+    def reset(self):
+        """Reset completo gioco"""
+        self.score = 0
+        self.game_over = False
+        self.state = self.STATE_INTRO
+        self.round = 1
+        self.player_wins = 0
+        self.ai_wins = 0
+        self.ai_difficulty = 1.0
+        self.reset_round()
+
+    def reset_round(self):
+        """Reset singolo round"""
+        # Player reset
+        self.player_energy = self.player_max_energy
+        self.player_charge = 0.0
+        self.player_is_parrying = False
+        self.player_parry_cooldown = 0.0
+        self.player_stagger = 0.0
+        self.spinner_velocity = 0.0
+        self.spinner_angle = 0.0
+        self.player_blade_speed = 0.0
+
+        # AI reset
+        self.ai_energy = self.ai_max_energy
+        self.ai_blade_angle = 180.0
+        self.ai_blade_speed = 0.0
+        self.ai_state = 'observe'
+        self.ai_timer = random.uniform(0.5, 1.5)
+        self.ai_charge = 0.0
+        self.ai_stagger = 0.0
+
+        # Combat reset
+        self.click_timer = 0.0
+        self.is_clicking = False
+        self.hit_cooldown_player = 0.0
+        self.hit_cooldown_ai = 0.0
+
+        # Effects reset
+        self.particles = []
+        self.floating_texts = []
+        self.screen_shake = 0.0
+        self.flash_white = 0.0
+        self.slow_motion = 1.0
+
+    # ==================== PHYSICS & MOVEMENT ====================
+
+    def update_blade_physics(self, dt: float, spinner_delta: float):
+        """Aggiorna fisica lama con inerzia realistica"""
+        if self.player_stagger > 0:
+            # Giocatore stunned: friction maggiore
+            self.spinner_velocity *= 0.85
+        else:
+            # Input spinner (con sensibilità)
+            acceleration = spinner_delta * self.spinner_sensitivity
+
+            # Detect direction change (inversioni brusche)
+            current_dir = 1 if spinner_delta > 0 else -1 if spinner_delta < 0 else 0
+            if current_dir != 0 and self.last_spinner_direction != 0:
+                if current_dir != self.last_spinner_direction:
+                    # Inversione brusca: penalità controllo
+                    self.spinner_velocity *= 0.6
+                    self.create_particles(
+                        self.player_x, self.player_y,
+                        (255, 150, 0), 15, speed_mult=0.5
+                    )
+                self.last_spinner_direction = current_dir
+
+            # Applica accelerazione
+            self.spinner_velocity += acceleration
+
+            # Friction naturale
+            self.spinner_velocity *= self.spinner_friction
+
+        # Clamp velocità massima
+        max_vel = 25.0
+        self.spinner_velocity = max(-max_vel, min(max_vel, self.spinner_velocity))
+
+        # Aggiorna angolo (la lama continua a girare per inerzia)
+        self.spinner_angle += self.spinner_velocity * dt * 60
+        self.spinner_angle %= 360
+
+        # Calcola velocità visiva lama (per lunghezza dinamica)
+        self.player_blade_speed = abs(self.spinner_velocity)
+
+    def update_ai_blade(self, dt: float):
+        """AI blade movement con comportamento adattivo"""
+        if self.ai_stagger > 0:
+            self.ai_blade_speed *= 0.9
+            self.ai_blade_angle += self.ai_blade_speed * dt * 60
+            return
+
+        # AI state machine
+        if self.ai_timer <= 0:
+            # Cambio stato
+            player_speed = self.player_blade_speed
+            distance = math.sqrt(
+                (self.ai_x - self.player_x)**2 + 
+                (self.ai_y - self.player_y)**2
+            )
+
+            # Decision making basato su contesto
+            if self.ai_energy < 30:
+                # Bassa energia: più difensivo
+                self.ai_state = random.choice(['defend', 'defend', 'observe'])
+            elif player_speed > 15 and self.ai_energy > 50:
+                # Giocatore veloce: rischia contrattacco
+                self.ai_state = random.choice(['attack', 'feint'])
+            elif player_speed < 5:
+                # Giocatore lento: punisci
+                self.ai_state = 'attack'
+            else:
+                # Normale
+                self.ai_state = random.choice(['observe', 'attack', 'defend'])
+
+            self.ai_timer = random.uniform(0.8, 2.0) / self.ai_difficulty
+
+        self.ai_timer -= dt
+
+        # Execute AI behavior
+        if self.ai_state == 'attack':
+            # Accelera verso giocatore
+            target_speed = 15 * self.ai_difficulty
+            if self.ai_blade_speed < target_speed:
+                self.ai_blade_speed += 30 * dt * self.ai_difficulty
+
+            # Carica se opportuno
+            if self.ai_blade_speed > 12 and random.random() < 0.02 * self.ai_difficulty:
+                self.ai_charge = min(1.0, self.ai_charge + dt * 2)
+
+        elif self.ai_state == 'defend':
+            # Rallenta e prepara parata
+            self.ai_blade_speed *= 0.95
+            target_speed = 5
+            if self.ai_blade_speed < target_speed:
+                self.ai_blade_speed += 10 * dt
+
+        elif self.ai_state == 'feint':
+            # Finta: accelerazioni random
+            if random.random() < 0.1:
+                self.ai_blade_speed += random.uniform(-5, 10) * dt * self.ai_difficulty
+
+        else:  # observe
+            # Mantiene velocità moderata
+            target_speed = 8
+            if abs(self.ai_blade_speed - target_speed) > 0.5:
+                if self.ai_blade_speed < target_speed:
+                    self.ai_blade_speed += 8 * dt
+                else:
+                    self.ai_blade_speed -= 8 * dt
+
+        # Friction & clamp
+        self.ai_blade_speed *= 0.95
+        self.ai_blade_speed = max(0, min(22 * self.ai_difficulty, self.ai_blade_speed))
+
+        # Update angle
+        self.ai_blade_angle += self.ai_blade_speed * dt * 60
+        self.ai_blade_angle %= 360
+
+    # ==================== COMBAT SYSTEM ====================
+
+    def check_collision(self) -> Tuple[bool, float]:
+        """
+        Controlla collisione lame
+        Returns: (hit_detected, hit_power)
+        """
+        # Calcola posizioni punta lama
+        player_blade_len = self.get_dynamic_blade_length(self.player_blade_speed)
+        ai_blade_len = self.get_dynamic_blade_length(self.ai_blade_speed)
+
+        player_tip_x = self.player_x + math.cos(math.radians(self.spinner_angle)) * player_blade_len
+        player_tip_y = self.player_y + math.sin(math.radians(self.spinner_angle)) * player_blade_len
+
+        ai_tip_x = self.ai_x + math.cos(math.radians(self.ai_blade_angle)) * ai_blade_len
+        ai_tip_y = self.ai_y + math.sin(math.radians(self.ai_blade_angle)) * ai_blade_len
+
+        # Distanza punta lama player -> corpo AI
+        dist_player_hit = math.sqrt((player_tip_x - self.ai_x)**2 + (player_tip_y - self.ai_y)**2)
+
+        # Distanza punta lama AI -> corpo player
+        dist_ai_hit = math.sqrt((ai_tip_x - self.player_x)**2 + (ai_tip_y - self.player_y)**2)
+
+        hit_threshold = 30  # Raggio hit
+
+        # Player colpisce AI
+        if dist_player_hit < hit_threshold and self.hit_cooldown_player <= 0:
+            power = self.calculate_hit_power(self.player_blade_speed, self.player_charge)
+            return ('player_hits', power)
+
+        # AI colpisce Player
+        if dist_ai_hit < hit_threshold and self.hit_cooldown_ai <= 0:
+            power = self.calculate_hit_power(self.ai_blade_speed, self.ai_charge)
+            return ('ai_hits', power)
+
+        return (None, 0)
+
+    def calculate_hit_power(self, blade_speed: float, charge: float) -> float:
+        """Calcola danno in base a velocità + carica"""
+        base_damage = blade_speed * 0.8  # Scaling da velocità
+        charge_bonus = charge * self.charge_power_max
+        return base_damage + charge_bonus
+
+    def apply_hit(self, hit_type: str, power: float):
+        """Applica danno e effetti colpo"""
+        if hit_type == 'player_hits':
+            # Giocatore colpisce AI
+            if self.ai_state == 'defend' and random.random() < 0.4:
+                # AI para (chance basata su stato)
+                power *= 0.3
+                self.create_floating_text(self.ai_x, self.ai_y - 50, "PARRIED!", (100, 200, 255))
+                if self.synth:
+                    self.synth.create_wall_bounce().play()
+            else:
+                # Colpo pieno
+                self.ai_stagger = 0.3
+                self.screen_shake = 0.4
+                if power > 25:
+                    self.create_floating_text(self.ai_x, self.ai_y - 50, "CRITICAL!", (255, 100, 100))
+                    self.flash_white = 0.3
+                    self.slow_motion = 0.5
+                    if self.synth:
+                        self.synth.create_high_score().play()
+                else:
+                    if self.synth:
+                        self.synth.create_hit().play()
+
+            self.ai_energy -= power
+            self.ai_energy = max(0, self.ai_energy)
+            self.hit_cooldown_player = 0.5
+            self.player_charge = 0.0  # Reset carica dopo colpo
+
+            # Particles
+            self.create_particles(self.ai_x, self.ai_y, (255, 50, 50), 40, speed_mult=2.0)
+            self.score += int(power * 10)
+
+        elif hit_type == 'ai_hits':
+            # AI colpisce giocatore
+            if self.player_is_parrying:
+                # Giocatore para
+                power *= 0.2
+                self.create_floating_text(self.player_x, self.player_y - 50, "BLOCKED!", (100, 255, 100))
+                self.player_is_parrying = False
+                self.player_parry_cooldown = 1.0
+                if self.synth:
+                    self.synth.create_wall_bounce().play()
+            else:
+                # Colpo pieno
+                self.player_stagger = 0.4
+                self.screen_shake = 0.5
+                if power > 25:
+                    self.flash_white = 0.2
+                if self.synth:
+                    self.synth.create_hit().play()
+
+            self.player_energy -= power
+            self.player_energy = max(0, self.player_energy)
+            self.hit_cooldown_ai = 0.5
+            self.ai_charge = 0.0
+
+            # Particles
+            self.create_particles(self.player_x, self.player_y, (255, 200, 50), 35, speed_mult=1.5)
+
+    def get_dynamic_blade_length(self, speed: float) -> float:
+        """Lunghezza lama dinamica basata su velocità"""
+        base = 80
+        bonus = min(60, speed * 3)  # Max +60px
+        return base + bonus
+
+    # ==================== UPDATE LOOP ====================
+
+    def update(self, dt: float, spinner_delta: float, spinner) -> bool:
+        """
+        Main update loop
+        Returns: True se continua, False se esce
+        """
+        # Adjust dt for slow-motion
+        effective_dt = dt * self.slow_motion
+
+        # Slow-motion recovery
+        if self.slow_motion < 1.0:
+            self.slow_motion = min(1.0, self.slow_motion + dt * 2)
+
+        self.time += dt
+        self.bg_wave += dt * 0.5
+
+        # Flash decay
+        if self.flash_white > 0:
+            self.flash_white -= dt * 2
+
+        # Pause handling
+        if spinner.is_right_clicked() and not self.paused and self.state == self.STATE_FIGHT:
+            self.paused = True
+            if self.synth:
+                self.synth.create_select().play()
+            return True
+
+        if self.paused:
+            if spinner.is_left_clicked():
+                # Exit game
+                if self.synth:
+                    self.synth.create_back().play()
+                self.game_over = True
+                return False
+            if spinner.is_right_clicked():
+                # Resume
+                self.paused = False
+                if self.synth:
+                    self.synth.create_select().play()
+            return True
+
+        # ===== STATE MACHINE =====
+
+        if self.state == self.STATE_INTRO:
+            # Intro screen: click per iniziare
+            if spinner.is_left_clicked():
+                self.state = self.STATE_FIGHT
+                self.reset_round()
+                if self.synth:
+                    self.synth.create_level_complete().play()
+            return True
+
+        elif self.state == self.STATE_FIGHT:
+            # Aggiorna cooldowns
+            if self.player_stagger > 0:
+                self.player_stagger -= dt
+            if self.ai_stagger > 0:
+                self.ai_stagger -= dt
+            if self.player_parry_cooldown > 0:
+                self.player_parry_cooldown -= dt
+            if self.hit_cooldown_player > 0:
+                self.hit_cooldown_player -= dt
+            if self.hit_cooldown_ai > 0:
+                self.hit_cooldown_ai -= dt
+
+            # Blade physics
+            self.update_blade_physics(effective_dt, spinner_delta)
+            self.update_ai_blade(effective_dt)
+
+            # Input: Click handling
+            left_pressed = pygame.mouse.get_pressed()[0]
+
+            if left_pressed:
+                if not self.is_clicking:
+                    # Inizio click
+                    self.is_clicking = True
+                    self.click_timer = 0.0
+
+                    # Parata immediata (se disponibile)
+                    if self.player_parry_cooldown <= 0 and self.player_stagger <= 0:
+                        self.player_is_parrying = True
+                        if self.synth:
+                            self.synth.create_powerup().play()
+
+                # Hold: carica attacco
+                self.click_timer += dt
+                if self.click_timer >= self.click_threshold:
+                    self.player_charge = min(1.0, (self.click_timer - self.click_threshold) / 1.5)
+                    # Visual feedback carica
+                    if int(self.time * 10) % 2 == 0:
+                        self.create_particles(self.player_x, self.player_y, (100, 200, 255), 3, speed_mult=0.3)
+
+            else:
+                if self.is_clicking:
+                    # Release click
+                    if self.click_timer < self.click_threshold:
+                        # Click breve: parata già eseguita
+                        pass
+                    else:
+                        # Hold rilasciato: colpo potente ready
+                        if self.player_charge > 0.5:
+                            self.create_floating_text(self.player_x, self.player_y - 70, "CHARGED!", (255, 255, 100))
+                            if self.synth:
+                                self.synth.create_score_point().play()
+
+                    self.is_clicking = False
+                    self.click_timer = 0.0
+
+                # Parata decade dopo breve tempo
+                if self.player_is_parrying:
+                    self.player_is_parrying = False
+
+            # Collision detection
+            hit_result, hit_power = self.check_collision()
+            if hit_result:
+                self.apply_hit(hit_result, hit_power)
+
+            # Check round end
+            if self.player_energy <= 0:
+                self.state = self.STATE_ROUND_END
+                self.ai_wins += 1
+                self.create_floating_text(640, 200, "AI WINS ROUND!", (255, 100, 100))
+                if self.synth:
+                    self.synth.create_game_over().play()
+            elif self.ai_energy <= 0:
+                self.state = self.STATE_ROUND_END
+                self.player_wins += 1
+                self.score += 1000
+                self.create_floating_text(640, 200, "PLAYER WINS ROUND!", (100, 255, 100))
+                if self.synth:
+                    self.synth.create_level_complete().play()
+
+        elif self.state == self.STATE_ROUND_END:
+            # Attesa tra round
+            if spinner.is_left_clicked():
+                if self.player_wins >= 2 or self.ai_wins >= 2:
+                    # Fine partita
+                    self.state = self.STATE_GAME_OVER
+                else:
+                    # Prossimo round
+                    self.round += 1
+                    self.ai_difficulty = min(2.5, 1.0 + self.round * 0.3)
+                    self.reset_round()
+                    self.state = self.STATE_FIGHT
+                if self.synth:
+                    self.synth.create_select().play()
+            return True
+
+        elif self.state == self.STATE_GAME_OVER:
+            if spinner.is_right_clicked():
+                return False  # Exit
+            return True
+
+        # Update particles & effects
+        self.update_particles(dt)
+        self.update_floating_texts(dt)
+        if self.screen_shake > 0:
+            self.screen_shake -= dt
+
+        return True
+
+    # ==================== VISUAL EFFECTS ====================
+
+    def create_particles(self, x: float, y: float, color: tuple, count: int, speed_mult: float = 1.0):
+        """Crea particelle esplosive"""
+        for _ in range(count):
+            angle = random.uniform(0, math.pi * 2)
+            speed = random.uniform(100, 400) * speed_mult
+            self.particles.append({
+                'x': x, 'y': y,
+                'vx': math.cos(angle) * speed,
+                'vy': math.sin(angle) * speed,
+                'life': random.uniform(0.3, 0.8),
+                'max_life': 0.8,
+                'color': color,
+                'size': random.uniform(3, 10)
+            })
+
+    def create_floating_text(self, x: float, y: float, text: str, color: tuple):
+        """Testo fluttuante"""
+        self.floating_texts.append({
+            'x': x, 'y': y, 'text': text, 'color': color,
+            'life': 2.0, 'vy': -80
+        })
+
+    def update_particles(self, dt: float):
+        for p in self.particles[:]:
+            p['x'] += p['vx'] * dt
+            p['y'] += p['vy'] * dt
+            p['vy'] += 600 * dt  # Gravity
+            p['life'] -= dt
+            if p['life'] <= 0:
+                self.particles.remove(p)
+
+    def update_floating_texts(self, dt: float):
+        for ft in self.floating_texts[:]:
+            ft['y'] += ft['vy'] * dt
+            ft['life'] -= dt
+            if ft['life'] <= 0:
+                self.floating_texts.remove(ft)
+
+    # ==================== RENDERING ====================
+
+    def draw(self, surface: pygame.Surface):
+        """Main render function"""
+        shake_x, shake_y = 0, 0
+        if self.screen_shake > 0:
+            shake_x = random.randint(-8, 8)
+            shake_y = random.randint(-8, 8)
+
+        # Background
+        self._draw_background(surface)
+
+        # State-specific rendering
+        if self.state == self.STATE_INTRO:
+            self._draw_intro(surface)
+        elif self.state == self.STATE_FIGHT:
+            self._draw_arena(surface, shake_x, shake_y)
+            self._draw_fighters(surface, shake_x, shake_y)
+            self._draw_hud(surface)
+        elif self.state == self.STATE_ROUND_END:
+            self._draw_arena(surface, shake_x, shake_y)
+            self._draw_fighters(surface, shake_x, shake_y)
+            self._draw_hud(surface)
+            self._draw_round_end(surface)
+        elif self.state == self.STATE_GAME_OVER:
+            self._draw_game_over(surface)
+
+        # Effects (always on top)
+        self._draw_particles(surface, shake_x, shake_y)
+        self._draw_floating_texts(surface)
+
+        # Flash overlay
+        if self.flash_white > 0:
+            alpha = int(self.flash_white * 150)
+            flash = pygame.Surface((1280, 720))
+            flash.fill((255, 255, 255))
+            flash.set_alpha(alpha)
+            surface.blit(flash, (0, 0))
+
+        # Pause overlay
+        if self.paused:
+            self._draw_pause(surface)
+
+    def _draw_background(self, surface: pygame.Surface):
+        """Background dinamico stile arcade"""
+        # Gradient scuro con wave
+        for y in range(720):
+            t = y / 720
+            wave = math.sin(self.bg_wave + t * 4) * 0.05
+            r = int(15 + 25 * (t + wave))
+            g = int(10 + 20 * (1 - t + wave))
+            b = int(25 + 40 * t)
+            pygame.draw.line(surface, (r, g, b), (0, y), (1280, y))
+
+        # Grid centrale (arena)
+        grid_color = (60, 70, 90)
+        center_y = 360
+        for i in range(-5, 6):
+            y = center_y + i * 60 + int(math.sin(self.bg_wave + i * 0.5) * 10)
+            alpha = 255 - abs(i) * 30
+            if alpha > 0:
+                line_surf = pygame.Surface((1280, 2), pygame.SRCALPHA)
+                line_surf.fill((*grid_color, alpha))
+                surface.blit(line_surf, (0, y))
+
+        # Particles stellate
+        random.seed(1234)
+        for _ in range(80):
+            x = random.randint(0, 1280)
+            y = random.randint(0, 720)
+            twinkle = 0.3 + 0.7 * abs(math.sin(self.time * 2 + x * 0.01))
+            c = int(150 * twinkle)
+            pygame.draw.circle(surface, (c, c, c+50), (x, y), 1)
+
+    def _draw_arena(self, surface: pygame.Surface, sx: int, sy: int):
+        """Arena di combattimento"""
+        # Linea centrale
+        center_x = 640
+        pygame.draw.line(surface, (80, 100, 130), 
+                        (center_x + sx, 100 + sy), (center_x + sx, 620 + sy), 3)
+
+        # Cerchi posizione fighters
+        pygame.draw.circle(surface, (70, 90, 120), 
+                          (int(self.player_x) + sx, int(self.player_y) + sy), 50, 2)
+        pygame.draw.circle(surface, (120, 90, 70), 
+                          (int(self.ai_x) + sx, int(self.ai_y) + sy), 50, 2)
+
+    def _draw_fighters(self, surface: pygame.Surface, sx: int, sy: int):
+        """Disegna giocatore e AI con lame"""
+        # === PLAYER ===
+        px, py = int(self.player_x + sx), int(self.player_y + sy)
+
+        # Corpo player (cerchio blu)
+        body_color = (100, 150, 255) if self.player_stagger <= 0 else (255, 150, 100)
+        pygame.draw.circle(surface, body_color, (px, py), 25)
+        pygame.draw.circle(surface, (200, 220, 255), (px, py), 25, 3)
+
+        # Lama player
+        blade_len = self.get_dynamic_blade_length(self.player_blade_speed)
+        blade_angle_rad = math.radians(self.spinner_angle)
+        blade_end_x = px + int(math.cos(blade_angle_rad) * blade_len)
+        blade_end_y = py + int(math.sin(blade_angle_rad) * blade_len)
+
+        # Blade glow
+        blade_color = (100, 200, 255)
+        if self.player_charge > 0.5:
+            blade_color = (255, 255, 100)
+        blade_width = int(6 + self.player_blade_speed * 0.5)
+
+        # Trail effect
+        for i in range(3):
+            trail_len = blade_len * (0.7 - i * 0.2)
+            trail_angle = blade_angle_rad - i * 0.3 * (1 if self.spinner_velocity > 0 else -1)
+            trail_x = px + int(math.cos(trail_angle) * trail_len)
+            trail_y = py + int(math.sin(trail_angle) * trail_len)
+            alpha = 100 - i * 30
+            trail_surf = pygame.Surface((1280, 720), pygame.SRCALPHA)
+            pygame.draw.line(trail_surf, (*blade_color, alpha), (px, py), (trail_x, trail_y), blade_width - i * 2)
+            surface.blit(trail_surf, (0, 0))
+
+        # Main blade
+        pygame.draw.line(surface, blade_color, (px, py), (blade_end_x, blade_end_y), blade_width)
+        pygame.draw.circle(surface, (255, 255, 255), (blade_end_x, blade_end_y), 8)
+
+        # Parry indicator
+        if self.player_is_parrying:
+            shield_surf = pygame.Surface((1280, 720), pygame.SRCALPHA)
+            shield_radius = int(40 + math.sin(self.time * 20) * 5)
+            pygame.draw.circle(shield_surf, (100, 255, 100, 120), (px, py), shield_radius, 4)
+            surface.blit(shield_surf, (0, 0))
+
+        # === AI ===
+        ax, ay = int(self.ai_x + sx), int(self.ai_y + sy)
+
+        # Corpo AI (cerchio rosso)
+        ai_body_color = (255, 100, 100) if self.ai_stagger <= 0 else (255, 200, 100)
+        pygame.draw.circle(surface, ai_body_color, (ax, ay), 25)
+        pygame.draw.circle(surface, (255, 150, 150), (ax, ay), 25, 3)
+
+        # Lama AI
+        ai_blade_len = self.get_dynamic_blade_length(self.ai_blade_speed)
+        ai_blade_angle_rad = math.radians(self.ai_blade_angle)
+        ai_blade_end_x = ax + int(math.cos(ai_blade_angle_rad) * ai_blade_len)
+        ai_blade_end_y = ay + int(math.sin(ai_blade_angle_rad) * ai_blade_len)
+
+        ai_blade_color = (255, 100, 100)
+        if self.ai_charge > 0.5:
+            ai_blade_color = (255, 50, 255)
+        ai_blade_width = int(6 + self.ai_blade_speed * 0.5)
+
+        # AI blade trail
+        for i in range(3):
+            trail_len = ai_blade_len * (0.7 - i * 0.2)
+            trail_angle = ai_blade_angle_rad - i * 0.3
+            trail_x = ax + int(math.cos(trail_angle) * trail_len)
+            trail_y = ay + int(math.sin(trail_angle) * trail_len)
+            alpha = 100 - i * 30
+            trail_surf = pygame.Surface((1280, 720), pygame.SRCALPHA)
+            pygame.draw.line(trail_surf, (*ai_blade_color, alpha), (ax, ay), (trail_x, trail_y), ai_blade_width - i * 2)
+            surface.blit(trail_surf, (0, 0))
+
+        pygame.draw.line(surface, ai_blade_color, (ax, ay), (ai_blade_end_x, ai_blade_end_y), ai_blade_width)
+        pygame.draw.circle(surface, (255, 255, 255), (ai_blade_end_x, ai_blade_end_y), 8)
+
+    def _draw_hud(self, surface: pygame.Surface):
+        """HUD con energie, round, score"""
+        # Energy bars
+        bar_width = 300
+        bar_height = 30
+
+        # Player energy (sinistra)
+        player_bar_x = 50
+        player_bar_y = 50
+        pygame.draw.rect(surface, (40, 40, 60), (player_bar_x, player_bar_y, bar_width, bar_height), 0, 8)
+
+        player_fill = int(bar_width * (self.player_energy / self.player_max_energy))
+        if player_fill > 0:
+            color = (100, 255, 100) if self.player_energy > 50 else (255, 200, 100) if self.player_energy > 25 else (255, 100, 100)
+            pygame.draw.rect(surface, color, (player_bar_x + 2, player_bar_y + 2, player_fill - 4, bar_height - 4), 0, 6)
+
+        pygame.draw.rect(surface, (150, 170, 200), (player_bar_x, player_bar_y, bar_width, bar_height), 3, 8)
+
+        player_txt = self.font_small.render("PLAYER", True, (150, 200, 255))
+        surface.blit(player_txt, (player_bar_x, player_bar_y - 28))
+
+        energy_txt = self.font_tiny.render(f"{int(self.player_energy)}/100", True, (255, 255, 255))
+        surface.blit(energy_txt, (player_bar_x + bar_width//2 - energy_txt.get_width()//2, player_bar_y + 6))
+
+        # AI energy (destra)
+        ai_bar_x = 1280 - 50 - bar_width
+        ai_bar_y = 50
+        pygame.draw.rect(surface, (60, 40, 40), (ai_bar_x, ai_bar_y, bar_width, bar_height), 0, 8)
+
+        ai_fill = int(bar_width * (self.ai_energy / self.ai_max_energy))
+        if ai_fill > 0:
+            color = (255, 100, 100) if self.ai_energy > 50 else (255, 150, 100) if self.ai_energy > 25 else (200, 100, 100)
+            pygame.draw.rect(surface, color, (ai_bar_x + 2, ai_bar_y + 2, ai_fill - 4, bar_height - 4), 0, 6)
+
+        pygame.draw.rect(surface, (200, 150, 150), (ai_bar_x, ai_bar_y, bar_width, bar_height), 3, 8)
+
+        ai_txt = self.font_small.render("AI OPPONENT", True, (255, 150, 150))
+        surface.blit(ai_txt, (ai_bar_x + bar_width - ai_txt.get_width(), ai_bar_y - 28))
+
+        ai_energy_txt = self.font_tiny.render(f"{int(self.ai_energy)}/100", True, (255, 255, 255))
+        surface.blit(ai_energy_txt, (ai_bar_x + bar_width//2 - ai_energy_txt.get_width()//2, ai_bar_y + 6))
+
+        # Round counter (centro alto)
+        round_txt = self.font_medium.render(f"ROUND {self.round}", True, (255, 255, 100))
+        surface.blit(round_txt, (640 - round_txt.get_width()//2, 20))
+
+        wins_txt = self.font_small.render(f"P:{self.player_wins}  vs  AI:{self.ai_wins}", True, (200, 200, 200))
+        surface.blit(wins_txt, (640 - wins_txt.get_width()//2, 60))
+
+        # Score
+        score_txt = self.font_small.render(f"SCORE: {self.score}", True, (255, 255, 255))
+        surface.blit(score_txt, (640 - score_txt.get_width()//2, 670))
+
+        # Charge indicator (player)
+        if self.player_charge > 0:
+            charge_txt = self.font_tiny.render(f"CHARGE: {int(self.player_charge * 100)}%", True, (255, 255, 100))
+            surface.blit(charge_txt, (player_bar_x, player_bar_y + 35))
+
+        # Speed indicator
+        speed_txt = self.font_tiny.render(f"SPEED: {int(self.player_blade_speed)}", True, (150, 200, 255))
+        surface.blit(speed_txt, (player_bar_x, player_bar_y + 55))
+
+    def _draw_intro(self, surface: pygame.Surface):
+        """Schermata introduttiva"""
+        # Title con effetto
+        pulse = abs(math.sin(self.time * 3)) * 0.2 + 0.8
+        title = self.font_huge.render("⚔️ SPIN DUEL ⚔️", True, (255, 255, 100))
+        title_scale = pygame.transform.scale(title, 
+            (int(title.get_width() * pulse), int(title.get_height() * pulse)))
+        surface.blit(title_scale, (640 - title_scale.get_width()//2, 150))
+
+        # Subtitle
+        subtitle = self.font_medium.render("Master the blade through rotation", True, (200, 200, 255))
+        surface.blit(subtitle, (640 - subtitle.get_width()//2, 280))
+
+        # Controls
+        y = 360
+        controls = [
+            "🌀 SPINNER - Control blade rotation & power",
+            "🛡️ CLICK (brief) - Parry incoming attacks",
+            "⚡ HOLD CLICK - Charge devastating strike",
+            "⏸️  RIGHT CLICK - Pause game"
+        ]
+        for ctrl in controls:
+            txt = self.font_small.render(ctrl, True, (180, 220, 255))
+            surface.blit(txt, (640 - txt.get_width()//2, y))
+            y += 45
+
+        # Start prompt
+        start = self.font_large.render("CLICK TO START", True, (100, 255, 100))
+        if int(self.time * 2) % 2:
+            surface.blit(start, (640 - start.get_width()//2, 600))
+
+    def _draw_round_end(self, surface: pygame.Surface):
+        """Overlay fine round"""
+        overlay = pygame.Surface((1280, 720))
+        overlay.fill((0, 0, 0))
+        overlay.set_alpha(180)
+        surface.blit(overlay, (0, 0))
+
+        if self.player_wins > self.ai_wins:
+            txt = self.font_huge.render("VICTORY!", True, (100, 255, 100))
+        else:
+            txt = self.font_huge.render("DEFEAT", True, (255, 100, 100))
+        surface.blit(txt, (640 - txt.get_width()//2, 250))
+
+        continue_txt = self.font_medium.render("Click to continue", True, (200, 200, 200))
+        surface.blit(continue_txt, (640 - continue_txt.get_width()//2, 450))
+
+    def _draw_game_over(self, surface: pygame.Surface):
+        """Schermata finale"""
+        overlay = pygame.Surface((1280, 720))
+        overlay.fill((0, 0, 0))
+        overlay.set_alpha(220)
+        surface.blit(overlay, (0, 0))
+
+        if self.player_wins >= 2:
+            title = self.font_huge.render("🏆 CHAMPION! 🏆", True, (255, 215, 0))
+        else:
+            title = self.font_huge.render("DEFEATED", True, (255, 100, 100))
+        surface.blit(title, (640 - title.get_width()//2, 180))
+
+        score = self.font_large.render(f"FINAL SCORE: {self.score}", True, (255, 255, 100))
+        surface.blit(score, (640 - score.get_width()//2, 300))
+
+        wins = self.font_medium.render(f"Player {self.player_wins} - {self.ai_wins} AI", True, (200, 200, 200))
+        surface.blit(wins, (640 - wins.get_width()//2, 380))
+
+        exit_txt = self.font_small.render("Right Click to Exit", True, (150, 150, 150))
+        surface.blit(exit_txt, (640 - exit_txt.get_width()//2, 550))
+
+    def _draw_pause(self, surface: pygame.Surface):
+        """Menu pausa"""
+        overlay = pygame.Surface((1280, 720))
+        overlay.fill((0, 0, 0))
+        overlay.set_alpha(200)
+        surface.blit(overlay, (0, 0))
+
+        title = self.font_huge.render("⏸️  PAUSED", True, (255, 255, 255))
+        surface.blit(title, (640 - title.get_width()//2, 250))
+
+        resume = self.font_medium.render("RIGHT CLICK - Resume", True, (100, 255, 100))
+        exit_txt = self.font_medium.render("LEFT CLICK - Exit", True, (255, 100, 100))
+        surface.blit(resume, (640 - resume.get_width()//2, 380))
+        surface.blit(exit_txt, (640 - exit_txt.get_width()//2, 430))
+
+    def _draw_particles(self, surface: pygame.Surface, sx: int, sy: int):
+        """Rendering particles"""
+        for p in self.particles:
+            alpha = int(255 * (p['life'] / p['max_life']))
+            size = int(p['size'])
+            surf = pygame.Surface((size*2, size*2), pygame.SRCALPHA)
+            pygame.draw.circle(surf, (*p['color'], alpha), (size, size), size)
+            surface.blit(surf, (int(p['x']-size+sx), int(p['y']-size+sy)))
+
+    def _draw_floating_texts(self, surface: pygame.Surface):
+        """Rendering floating text"""
+        for ft in self.floating_texts:
+            alpha = int(255 * (ft['life'] / 2.0))
+            txt = self.font_large.render(ft['text'], True, ft['color'])
+            txt.set_alpha(alpha)
+            surface.blit(txt, (int(ft['x'] - txt.get_width()//2), int(ft['y'])))
 
 
 
@@ -10168,6 +11187,7 @@ class GameManager:
                 SpinnerDefense(self.synth),
                 PongSpinner(self.synth),
                 Kaleidoscope(self.synth),
+                SpinDuel(self.synth),
                 YahtzeeSpinner(self.synth)
             ]
         return self._game_instances
