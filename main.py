@@ -3951,15 +3951,6 @@ class Kaleidoscope(MiniGame):
 
 
 class YahtzeeSpinner(MiniGame):
-    """
-    Yahtzee Spinner - Versione finale ottimizzata
-    
-    - Spinner sensibile per selezione dadi/categorie
-    - Lancio dadi richiede più rotazione
-    - Se tieni tutti i 5 dadi → vai direttamente allo scoring
-    - Layout scorecard compatto e corretto
-    """
-    
     CATEGORIES = [
         ('ones', 'Ones', True),
         ('twos', 'Twos', True),
@@ -4060,9 +4051,9 @@ class YahtzeeSpinner(MiniGame):
         self.screen_shake = 0
         self.time = 0
         self.bg_wave = 0
-    
+        
     def roll_dice(self):
-        """Lancia dadi non held"""
+        """Lancia dadi non held - CORRETTO"""
         if not self.can_roll or self.roll_animation > 0:
             return
         
@@ -4087,16 +4078,27 @@ class YahtzeeSpinner(MiniGame):
         self.create_particles(640, 420, (255, 255, 100), 30)
         self.screen_shake = 0.25
         
-        # Dopo lancio
-        if self.rolls_left > 0:
-            self.phase = 'selecting'
-            self.selected_die = 0
-        else:
-            # Finiti i lanci → scoring
+        # CORREZIONE: Logica invertita sistemata
+        if self.rolls_left == 0:
+            # Finiti i lanci → vai direttamente a scoring
             self.phase = 'scoring'
             self.selected_category = 0
-    
-   
+        else:
+            # Lanci disponibili → torna a selecting (per scegliere hold)
+            self.phase = 'selecting'
+            self.selected_die = 0
+
+    def new_turn(self):
+        """Inizia nuovo turno dopo aver scelto categoria"""
+        self.rolls_left = 3
+        self.dice_held = [False] * 5  # Tutti liberi
+        self.phase = 'roll'
+        self.can_roll = True
+        self.roll_animation = 0
+        self.roll_cooldown = 0
+        self.selected_die = 0
+        self.spinner_accumulator = 0[file:1]
+        self.turn += 1
     
     def calculate_score(self, cat_id: str, dice: List[int]) -> int:
         counts = [0] * 7
@@ -4165,7 +4167,7 @@ class YahtzeeSpinner(MiniGame):
             self.synth.create_powerup().play()
         
         # Prossimo turno
-        self.turn += 1
+        
         if self.turn >= 13:
             self.game_over = True
             if self.synth:
@@ -4484,16 +4486,310 @@ class YahtzeeSpinner(MiniGame):
 
 
     def _draw_background(self, surface):
-        surface.fill((12, 18, 32))
-        for y in range(0, 720, 3):
-            wave = math.sin(self.bg_wave + y * 0.006) * 12
-            r = int(12 + wave)
-            g = int(18 + wave * 0.9)
-            b = int(32 + wave * 1.1)
-            pygame.draw.line(surface, (max(0,r), max(0,g), max(0,b)), (0, y), (1280, y), 3)
-    
-
-
+        w, h = 1280, 720
+        theme_id = self.turn % 13
+        
+        if theme_id == 0:  # NEON GRID (cyberpunk)
+            surface.fill((5, 5, 15))
+            for y in range(h):
+                t = y / h
+                r = int(10 + 40 * t)
+                g = int(5 + 10 * t)
+                b = int(40 + 120 * t)
+                pygame.draw.line(surface, (r, g, b), (0, y), (w, y))
+            
+            horizon_y = int(h * 0.45)
+            spacing = 40
+            for i in range(1, 20):
+                y = horizon_y + i * spacing
+                col = (80, 200, 255)
+                pygame.draw.line(surface, col, (0, y), (w, y), 1)
+            
+            for i in range(-10, 11):
+                x = w // 2 + i * spacing
+                pygame.draw.line(surface, (80, 200, 255), (x, h), (w // 2 + i * 10, horizon_y), 1)
+            
+            radius = 80 + int(math.sin(self.bg_wave * 0.7) * 6)
+            pygame.draw.circle(surface, (255, 140, 200), (w // 2, horizon_y - 60), radius, 4)
+            
+            for _ in range(30):
+                x = random.randint(0, w)
+                y = random.randint(0, horizon_y)
+                pulse = 100 + int(155 * abs(math.sin(self.bg_wave + x * 0.01)))
+                pygame.draw.circle(surface, (pulse, pulse//2, 255), (x, y), 1)
+        
+        elif theme_id == 1:  # SPAZIO PROFONDO
+            surface.fill((4, 6, 12))
+            for y in range(h):
+                t = y / h
+                r = int(10 + 40 * (1 - t))
+                g = int(10 + 20 * t)
+                b = int(30 + 80 * t)
+                pygame.draw.line(surface, (r, g, b), (0, y), (w, y))
+            
+            random.seed(1234)
+            for _ in range(180):
+                x = random.randint(0, w - 1)
+                y = random.randint(0, h - 1)
+                twinkle = 0.2 + 0.8 * (0.5 + 0.5 * math.sin(self.bg_wave*2 + x*0.01 + y*0.02))
+                c = int(150 * twinkle)
+                pygame.draw.circle(surface, (c, c, c), (x, y), 1)
+            
+            for cx, cy, col in [(w*0.2, h*0.3, (80, 40, 150)), (w*0.8, h*0.6, (150, 40, 100))]:
+                for r in range(100, 10, -8):
+                    alpha = int(60 * (r/100))
+                    pygame.draw.circle(surface, col, (int(cx), int(cy)), r, 2)
+        
+        elif theme_id == 2:  # GRADIENT MORBIDO + PARTICELLE
+            for y in range(h):
+                t = y / h
+                wave = math.sin(self.bg_wave + t * 6) * 0.1
+                r = int(20 + 60 * (t + wave))
+                g = int(30 + 80 * (1 - t + wave))
+                b = int(50 + 90 * t)
+                pygame.draw.line(surface, (r, g, b), (0, y), (w, y))
+            
+            random.seed(5678)
+            for i in range(60):
+                base_x = random.randint(0, w)
+                base_y = random.randint(0, h)
+                off_y = int(math.sin(self.bg_wave*0.8 + i*0.3) * 10)
+                size = 2 + (i % 3)
+                pygame.draw.circle(surface, (200, 230, 255), (base_x, base_y + off_y), size, 1)
+        
+        elif theme_id == 3:  # LAVA/FUOCO
+            for y in range(h):
+                t = y / h
+                wave = math.sin(self.bg_wave*1.5 + y * 0.01) * 0.15
+                r = int(120 + 135 * (t + wave))
+                g = int(20 + 60 * (1 - t))
+                b = int(5)
+                pygame.draw.line(surface, (min(255, r), max(0, g), b), (0, y), (w, y))
+            
+            random.seed(3333)
+            for _ in range(40):
+                x = random.randint(0, w)
+                y = random.randint(int(h*0.6), h)
+                off = int(math.sin(self.bg_wave*2 + x*0.02) * 30)
+                col = (255, random.randint(100, 200), 0)
+                pygame.draw.circle(surface, col, (x, y + off), random.randint(3, 8))
+            
+            for i in range(0, w, 80):
+                x = i + int(math.sin(self.bg_wave + i*0.01) * 20)
+                pygame.draw.line(surface, (255, 150, 0), (x, int(h*0.7)), (x + 40, h), 2)
+        
+        elif theme_id == 4:  # FORESTA MISTICA (verde)
+            for y in range(h):
+                t = y / h
+                r = int(10 + 30 * t)
+                g = int(40 + 80 * t)
+                b = int(20 + 40 * t)
+                pygame.draw.line(surface, (r, g, b), (0, y), (w, y))
+            
+            random.seed(4444)
+            for _ in range(100):
+                x = random.randint(0, w)
+                y = random.randint(0, h)
+                pulse = 0.5 + 0.5 * math.sin(self.bg_wave + x*0.02)
+                col = (50, int(150 * pulse), 80)
+                pygame.draw.circle(surface, col, (x, y), random.randint(1, 3))
+            
+            for i in range(15):
+                x = i * 85
+                height = random.randint(200, 400)
+                for h_seg in range(0, height, 10):
+                    y = h - h_seg
+                    width = 15 + int(math.sin(self.bg_wave*0.5 + h_seg*0.1) * 8)
+                    pygame.draw.circle(surface, (20, 100, 40), (x, y), width//2)
+        
+        elif theme_id == 5:  # TECH CIRCUITI (matrix verde)
+            surface.fill((0, 8, 0))
+            for y in range(h):
+                t = y / h
+                g = int(10 + 40 * t)
+                pygame.draw.line(surface, (0, g, 0), (0, y), (w, y))
+            
+            random.seed(5555)
+            for _ in range(50):
+                x1, y1 = random.randint(0, w), random.randint(0, h)
+                x2, y2 = x1 + random.randint(-100, 100), y1 + random.randint(-100, 100)
+                pulse = int(100 + 155 * abs(math.sin(self.bg_wave + x1*0.01)))
+                pygame.draw.line(surface, (0, pulse, 0), (x1, y1), (x2, y2), 1)
+                pygame.draw.circle(surface, (0, 255, 0), (x1, y1), 3, 1)
+            
+            for i in range(0, w, 40):
+                x = i
+                for j in range(0, h, 40):
+                    brightness = int(50 + 50 * math.sin(self.bg_wave + i*0.01 + j*0.01))
+                    pygame.draw.rect(surface, (0, brightness, 0), (x, j, 2, 2))
+        
+        elif theme_id == 6:  # OCEANO PROFONDO
+            for y in range(h):
+                t = y / h
+                wave = math.sin(self.bg_wave + y * 0.008) * 0.1
+                r = int(5 + 20 * t)
+                g = int(40 + 80 * (t + wave))
+                b = int(100 + 155 * t)
+                pygame.draw.line(surface, (r, min(255, g), b), (0, y), (w, y))
+            
+            random.seed(6666)
+            for _ in range(80):
+                x = random.randint(0, w)
+                y = random.randint(0, h)
+                off_x = int(math.sin(self.bg_wave*0.5 + y*0.01) * 30)
+                off_y = int(math.cos(self.bg_wave*0.3 + x*0.01) * 20)
+                size = random.randint(2, 5)
+                pygame.draw.circle(surface, (100, 180, 255), (x + off_x, y + off_y), size, 1)
+            
+            for i in range(0, w, 100):
+                x = i + int(math.sin(self.bg_wave + i*0.01) * 40)
+                y = int(h * 0.3) + int(math.cos(self.bg_wave*0.8 + i*0.02) * 50)
+                pygame.draw.circle(surface, (50, 150, 200), (x, y), 20, 2)
+        
+        elif theme_id == 7:  # AURORA BOREALE
+            for y in range(h):
+                t = y / h
+                r = int(10 + 40 * (1-t))
+                g = int(5 + 30 * t)
+                b = int(20 + 60 * t)
+                pygame.draw.line(surface, (r, g, b), (0, y), (w, y))
+            
+            for band in range(4):
+                base_y = int(h * (0.2 + band * 0.15))
+                for x in range(0, w, 5):
+                    wave1 = math.sin(self.bg_wave*0.8 + x*0.01 + band)
+                    wave2 = math.cos(self.bg_wave*0.5 + x*0.015 + band*0.5)
+                    y = base_y + int(wave1 * 60 + wave2 * 40)
+                    if band % 2 == 0:
+                        col = (100, int(200 + 55*wave1), 150)
+                    else:
+                        col = (150, int(100 + 55*wave2), 255)
+                    pygame.draw.circle(surface, col, (x, y), 3)
+            
+            random.seed(7777)
+            for _ in range(120):
+                x = random.randint(0, w)
+                y = random.randint(0, int(h*0.5))
+                pygame.draw.circle(surface, (200, 200, 220), (x, y), 1)
+        
+        elif theme_id == 8:  # DESERTO TRAMONTO
+            for y in range(h):
+                t = y / h
+                if t < 0.5:
+                    r = int(255 - 50 * t)
+                    g = int(180 - 100 * t)
+                    b = int(100 - 80 * t)
+                else:
+                    r = int(200 - 150 * (t-0.5))
+                    g = int(120 - 80 * (t-0.5))
+                    b = int(40 + 40 * (t-0.5))
+                pygame.draw.line(surface, (r, g, b), (0, y), (w, y))
+            
+            sun_y = int(h * 0.35)
+            for r in range(100, 20, -5):
+                intensity = (100 - r) / 80
+                col = (255, int(200 - 100*intensity), int(50 - 50*intensity))
+                pygame.draw.circle(surface, col, (w//2, sun_y), r)
+            
+            random.seed(8888)
+            dune_points = []
+            for i in range(0, w, 30):
+                y = int(h*0.6) + int(math.sin(self.bg_wave*0.3 + i*0.01) * 40)
+                dune_points.append((i, y))
+            for i in range(len(dune_points)-1):
+                pygame.draw.line(surface, (140, 100, 50), dune_points[i], dune_points[i+1], 3)
+        
+        elif theme_id == 9:  # TEMPESTA ELETTRICA (viola)
+            for y in range(h):
+                t = y / h
+                wave = math.sin(self.bg_wave*2 + y*0.01) * 0.1
+                r = int(40 + 60 * (t + wave))
+                g = int(10 + 30 * t)
+                b = int(60 + 100 * (t + wave))
+                pygame.draw.line(surface, (min(255, r), g, min(255, b)), (0, y), (w, y))
+            
+            random.seed(9999)
+            for _ in range(8):
+                x = random.randint(100, w-100)
+                y_start = random.randint(0, int(h*0.3))
+                segments = random.randint(5, 10)
+                curr_x, curr_y = x, y_start
+                flash = int(200 + 55 * math.sin(self.bg_wave*5))
+                for seg in range(segments):
+                    next_x = curr_x + random.randint(-30, 30)
+                    next_y = curr_y + random.randint(40, 80)
+                    pygame.draw.line(surface, (flash, flash, 255), (curr_x, curr_y), (next_x, next_y), 3)
+                    curr_x, curr_y = next_x, next_y
+                    if curr_y > h:
+                        break
+            
+            for _ in range(40):
+                x = random.randint(0, w)
+                y = random.randint(0, h)
+                pulse = 100 + int(155 * abs(math.sin(self.bg_wave*3 + x*0.02)))
+                pygame.draw.circle(surface, (pulse, pulse//2, 255), (x, y), 2)
+        
+        elif theme_id == 10:  # CRISTALLI GHIACCIO
+            for y in range(h):
+                t = y / h
+                r = int(180 + 75 * t)
+                g = int(220 + 35 * t)
+                b = 255
+                pygame.draw.line(surface, (r, g, b), (0, y), (w, y))
+            
+            random.seed(10101)
+            for _ in range(25):
+                cx = random.randint(50, w-50)
+                cy = random.randint(50, h-50)
+                size = random.randint(30, 80)
+                rotation = self.bg_wave*0.5 + cx*0.01
+                for angle in range(0, 360, 60):
+                    rad = math.radians(angle + rotation * 50)
+                    x1 = cx + int(math.cos(rad) * size)
+                    y1 = cy + int(math.sin(rad) * size)
+                    pygame.draw.line(surface, (150, 200, 255), (cx, cy), (x1, y1), 2)
+                    pygame.draw.circle(surface, (200, 230, 255), (x1, y1), 5)
+            
+            for _ in range(100):
+                x = random.randint(0, w)
+                y = random.randint(0, h)
+                sparkle = int(150 + 105 * abs(math.sin(self.bg_wave*4 + x*0.01)))
+                pygame.draw.circle(surface, (sparkle, sparkle, 255), (x, y), 1)
+        
+        elif theme_id == 11:  # PSICHEDELICO
+            for y in range(h):
+                t = y / h
+                wave1 = math.sin(self.bg_wave + t * 10) * 0.5
+                wave2 = math.cos(self.bg_wave*1.3 + t * 8) * 0.5
+                r = int(128 + 127 * wave1)
+                g = int(128 + 127 * wave2)
+                b = int(128 + 127 * math.sin(self.bg_wave*0.7 + t*12))
+                pygame.draw.line(surface, (r, g, b), (0, y), (w, y))
+            
+            for ring in range(1, 8):
+                radius = ring * 60 + int(math.sin(self.bg_wave + ring) * 20)
+                hue = (self.bg_wave*30 + ring*45) % 360
+                r = int(128 + 127 * math.sin(math.radians(hue)))
+                g = int(128 + 127 * math.sin(math.radians(hue + 120)))
+                b = int(128 + 127 * math.sin(math.radians(hue + 240)))
+                pygame.draw.circle(surface, (r, g, b), (w//2, h//2), radius, 3)
+            
+            random.seed(11111)
+            for _ in range(60):
+                x = random.randint(0, w)
+                y = random.randint(0, h)
+                col = (random.randint(100, 255), random.randint(100, 255), random.randint(100, 255))
+                size = 2 + int(3 * abs(math.sin(self.bg_wave + x*0.01)))
+                pygame.draw.circle(surface, col, (x, y), size)
+        
+        else:  # theme_id == 12: MINIMALISTA SCURO
+            surface.fill((12, 18, 32))
+            for y in range(0, 720, 3):
+                wave = math.sin(self.bg_wave + y * 0.006) * 12
+                r = int(12 + wave)
+                g = int(18 + wave * 0.9)
+                b = int(32 + wave * 1.1)
+                pygame.draw.line(surface, (max(0,r), max(0,g), max(0,b)), (0, y), (1280, y), 3)
 
 
 
@@ -4572,6 +4868,213 @@ class YahtzeeSpinner(MiniGame):
 
 
 
+    def draw_roll_the_dice(self, surface):
+        """ROLL THE DICE! screen PRO: testo fumetto + 3 dadi rotanti luminosi"""
+
+        # Background gradient roll (nero->blu scuro per profondità arcade)
+        grad = pygame.Surface((1280, 720))
+        for y in range(720):
+            alpha = int(255 * (y / 720))
+            col = (10, 10 + alpha // 4, 20 + alpha // 2)
+            pygame.draw.line(grad, col, (0, y), (1280, y))
+        surface.blit(grad, (0, 0))
+
+        # Testo principale
+        pulse = abs(math.sin(self.time * 6)) * 0.25 + 0.75
+        bounce = abs(math.sin(self.time * 4)) * 0.15
+        hue_speed = self.time * 0.08
+
+        text = "ROLL THE DICE!"
+        base_font = self.font_huge
+        textsurf = base_font.render(text, True, (255, 255, 255))
+        w, h = textsurf.get_size()
+
+        scale = 1.4 + pulse * 0.3 + bounce * 0.15
+        scaled_w = int(w * scale)
+        scaled_h = int(h * scale)
+
+        num_chars = len(text)
+        color_surfs = []
+        for i, char in enumerate(text):
+            hue = (hue_speed + i / num_chars * 2) % 1.0
+            value = 0.98 + pulse * 0.02
+
+            hue2 = hue * 6.0
+            sector = int(hue2)
+            f = hue2 - sector
+            p = value * (1 - 1)
+            q = value * (1 - f * 1)
+            t = value * (1 - (1 - f) * 1)
+
+            if sector == 0:
+                rgb = (value, t, p)
+            elif sector == 1:
+                rgb = (q, value, p)
+            elif sector == 2:
+                rgb = (p, value, t)
+            elif sector == 3:
+                rgb = (p, q, value)
+            elif sector == 4:
+                rgb = (t, p, value)
+            else:
+                rgb = (value, p, q)
+
+            char_color = tuple(int(255 * c) for c in rgb)
+            char_surf = base_font.render(char, True, char_color)
+            color_surfs.append((char_surf, char_color))
+
+        border_width = 3
+        final_surf = pygame.Surface(
+            (scaled_w + border_width * 4, scaled_h + border_width * 4),
+            pygame.SRCALPHA
+        )
+
+        # Bordi glow multi-layer
+        border_offsets = [
+            (-border_width - 1, 0),
+            (border_width + 1, 0),
+            (0, -border_width - 1),
+            (0, border_width + 1),
+        ]
+        glow_colors = [(40, 40, 60), (100, 150, 255), (255, 100, 150)]
+        for glow_idx, (dx, dy) in enumerate(border_offsets * 2):
+            if glow_idx < len(glow_colors) * 2:
+                col = glow_colors[glow_idx % len(glow_colors)]
+            else:
+                col = (20, 20, 20)
+            bx = border_width * 2 + dx
+            by = border_width * 2 + dy
+            for j, (char_surf, _) in enumerate(color_surfs):
+                char_w = int(char_surf.get_width() * scale)
+                pos_x = bx + sum(int(cs.get_width() * scale) for cs, _ in color_surfs[:j])
+                pos_y = by
+                scaled_border = pygame.transform.scale(
+                    char_surf, (char_w, int(char_surf.get_height() * scale))
+                )
+                final_surf.blit(scaled_border, (pos_x, pos_y))
+
+        # Testo centrato
+        cx, cy = border_width * 2, border_width * 2
+        for j, (char_surf, _) in enumerate(color_surfs):
+            char_w = int(char_surf.get_width() * scale)
+            char_h = int(char_surf.get_height() * scale)
+            pos_x = cx + sum(int(cs.get_width() * scale) for cs, _ in color_surfs[:j])
+            pos_y = cy + (scaled_h - char_h) // 2
+            scaled_char = pygame.transform.scale(char_surf, (char_w, char_h))
+            final_surf.blit(scaled_char, (pos_x, pos_y))
+
+        final_surf = final_surf.convert_alpha()
+        blit_x = 640 - final_surf.get_width() // 2
+        blit_y = 280 - final_surf.get_height() // 2 + int(bounce * 30)
+        surface.blit(final_surf, (blit_x, blit_y))
+
+        # 3 DADI SFONDO (all'altezza del testo, dietro)
+        dice_size = 100
+        dice_rot_speed = self.time * 2
+        dice_faces = [1, 4, 6]
+
+        for i in range(3):
+            # Orbita più ampia e centrata all'altezza del testo (Y ~280-300)
+            angle = dice_rot_speed + i * 2.1
+            radius = 300 + pulse * 30  # Più larghi per stare sullo sfondo
+            dx = math.cos(angle) * radius
+            dy = math.sin(angle) * radius * 0.3 + pulse * 15
+
+            dice_x = 640 + dx - dice_size // 2
+            # Posizionati esattamente all'altezza del testo centrale
+            dice_y = 280 + dy - dice_size // 2
+
+            # Rotazione
+            rot = math.sin(self.time * 5 + i) * 360
+            dice_surf = self._create_rotated_die(dice_faces[i], dice_size, rot)
+
+            # Glow sottilissimo (quasi invisibile)
+            glow_surf = pygame.transform.scale(
+                dice_surf, (dice_size + 20, dice_size + 20)
+            )
+            glow_surf.set_alpha(50)
+            surface.blit(glow_surf, (dice_x - 10, dice_y - 10))
+
+            # Ombra leggera
+            shadow_surf = pygame.Surface((dice_size, dice_size), pygame.SRCALPHA)
+            pygame.draw.ellipse(
+                shadow_surf,
+                (0, 0, 0, 40),
+                (0, dice_size // 2, dice_size, dice_size // 2),
+            )
+            surface.blit(shadow_surf, (dice_x + 6, dice_y + 8))
+
+            # Dado principale
+            surface.blit(dice_surf, (dice_x, dice_y))
+
+        # Particelle sparkle
+        for _ in range(8):
+            spark_x = 640 + math.sin(self.time * 10 + _) * 400
+            spark_y = 200 + math.cos(self.time * 7 + _ * 1.3) * 100
+            spark_size = int(4 + math.sin(self.time * 15 + _) * 3)
+            col = (255, 255 - int(self.time * 3 % 100), 200)
+            pygame.draw.circle(surface, col, (int(spark_x), int(spark_y)), spark_size)
+
+
+    def _create_rotated_die(self, face, size, rotation):
+        """Dado bianco/nero professionale con facce curate"""
+
+        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        margin = int(size * 0.08)
+        rect = pygame.Rect(
+            margin,
+            margin,
+            size - margin * 2,
+            size - margin * 2,
+        )
+
+        # Gradiente glow interno (grigio molto chiaro)
+        glow_surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        pygame.draw.rect(glow_surf, (240, 240, 240), rect.inflate(12, 12), border_radius=16)
+        glow_surf.set_alpha(60)
+        surf.blit(glow_surf, (0, 0))
+
+        # Dado base (bianco puro)
+        pygame.draw.rect(surf, (255, 255, 255), rect, border_radius=14)
+
+        # Bordo nero netto
+        pygame.draw.rect(surf, (0, 0, 0), rect, width=2, border_radius=14)
+
+        # Dots precisi e simmetrici (neri con highlight 3D)
+        dot_size = int(rect.width * 0.15) if face in [4, 5, 6] else int(rect.width * 0.18)
+        cx, cy = rect.center
+        quarter = int(rect.width * 0.25)
+
+        # Posizioni standard perfette per dado
+        dots_pos = {
+            1: [(0, 0)],  # Centro
+            4: [(-quarter, -quarter), (quarter, -quarter),
+                (-quarter, quarter), (quarter, quarter)],  # Angoli
+            6: [(-quarter, -rect.height * 0.35), (quarter, -rect.height * 0.35),
+                (0, 0),
+                (-quarter, rect.height * 0.35), (quarter, rect.height * 0.35)],  # 3 colonne
+        }
+
+        for dx, dy in dots_pos.get(face, []):
+            dot_rect = pygame.Rect(
+                cx + dx - dot_size // 2,
+                cy + dy - dot_size // 2,
+                dot_size,
+                dot_size,
+            )
+            
+            # Dot nero principale
+            pygame.draw.ellipse(surf, (15, 15, 15), dot_rect)
+            
+            # Highlight 3D (luce da sopra-sinistra)
+            highlight = dot_rect.inflate(-dot_size * 0.35, -dot_size * 0.35)
+            highlight.move_ip(-2, -2)
+            pygame.draw.ellipse(surf, (90, 90, 90), highlight)
+
+        # Rotazione smooth
+        rotated = pygame.transform.rotate(surf, rotation)
+        return rotated.convert_alpha()
+
 
 
 
@@ -4581,39 +5084,14 @@ class YahtzeeSpinner(MiniGame):
     def _draw_dice(self, surface, sx, sy):
         """Progress SOTTO dadi (visibile), istruzioni SOPRA dadi ben disegnate"""
         
-        dice_y = 540 + sy  # Dadi 540-680px
+        dice_y = 540 + sy  # DADI SPOSTATI: 540-680px (più spazio sopra e sotto)
         
-        # ISTRUZIONI SOPRA DADI (ben disegnate, 480-510px)
+
+        # PROGRESS BAR SOTTO DADI (più distanziata)
         if self.phase == 'roll' and self.can_roll:
-            # Roll instructions box elegante
-            instr_w, instr_h = 500, 28
-            instr_x = 640 - instr_w // 2 + sx
-            instr_y = dice_y - 55 + sy  # 55px sopra dadi
-            
-            # BG gradient soft
-            pygame.draw.rect(surface, (240, 245, 255), (instr_x, instr_y, instr_w, instr_h), 0, 16)
-            pygame.draw.rect(surface, (100, 140, 200), (instr_x, instr_y, instr_w, instr_h), 2, 16)
-            
-            txt = self.font_small.render("SPIN TO ROLL!", True, (30, 50, 100))
-            surface.blit(txt, (instr_x + instr_w//2 - txt.get_width()//2, instr_y + 6))
-        
-        elif self.phase == 'selecting':
-            # Hold instructions box
-            instr_w, instr_h = 520, 30
-            instr_x = 640 - instr_w // 2 + sx
-            instr_y = dice_y - 55 + sy
-            
-            pygame.draw.rect(surface, (250, 245, 255), (instr_x, instr_y, instr_w, instr_h), 0, 16)
-            pygame.draw.rect(surface, (120, 160, 220), (instr_x, instr_y, instr_w, instr_h), 2, 16)
-            
-            txt = self.font_small.render("HOLD LEFT 2.5s or all dice → CONTINUE", True, (40, 60, 120))
-            surface.blit(txt, (instr_x + instr_w//2 - txt.get_width()//2, instr_y + 6))
-        
-        # PROGRESS BAR SOTTO DADI (vicina, 690-715px visibile)
-        if self.phase == 'roll' and self.can_roll:
-            bar_w, bar_h = 400, 22  # Compatta sotto
+            bar_w, bar_h = 400, 22
             bar_x = 640 - bar_w // 2 + sx
-            bar_y = dice_y + 145 + sy  # Subito sotto dadi (140+5px)
+            bar_y = dice_y + 148 + sy
             
             pygame.draw.rect(surface, (30, 35, 50), (bar_x, bar_y, bar_w, bar_h), 0, 12)
             
@@ -4628,12 +5106,14 @@ class YahtzeeSpinner(MiniGame):
             pygame.draw.rect(surface, (130, 140, 170), (bar_x, bar_y, bar_w, bar_h), 2, 12)
             pct_txt = self.font_tiny.render(f"{int(progress*100)}%", True, (255, 255, 255))
             surface.blit(pct_txt, (bar_x + bar_w//2 - pct_txt.get_width()//2, bar_y + 5))
-        
+
+            self.draw_roll_the_dice(surface)
+
+
         elif self.phase == 'selecting' and self.left_hold_timer > 0:
-            # Hold progress sotto
             bar_w, bar_h = 420, 24
             bar_x = 640 - bar_w // 2 + sx
-            bar_y = dice_y + 145 + sy
+            bar_y = dice_y + 148 + sy
             
             pygame.draw.rect(surface, (35, 40, 55), (bar_x, bar_y, bar_w, bar_h), 0, 12)
             
@@ -4646,12 +5126,12 @@ class YahtzeeSpinner(MiniGame):
             pct_txt = self.font_tiny.render(f"HOLD {int(progress*100)}%", True, (255, 255, 255))
             surface.blit(pct_txt, (bar_x + bar_w//2 - pct_txt.get_width()//2, bar_y + 4))
         
-        # Dadi centrati invariati
+        # DADI centrati (posizione ottimizzata)
         dice_spacing = 200
         start_x = 640 - (4 * dice_spacing // 2) - 70 + sx
         for i in range(5):
             x = start_x + i * dice_spacing
-            y = dice_y
+            y = dice_y - 50
             
             rect = pygame.Rect(x, y, 140, 140)
             
@@ -4676,7 +5156,6 @@ class YahtzeeSpinner(MiniGame):
             num = self.font_tiny.render(str(i+1), True, (130, 130, 150))
             surface.blit(num, (x + 10, y + 10))
 
-    
 
 
 
