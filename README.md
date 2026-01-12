@@ -34,6 +34,10 @@ Custom `SoundSynthesizer` generates all game sounds procedurally:
 - **Particle Systems**: Explosions, sparkles, and trail effects
 - **HUD**: Minimal arcade-style heads-up display
 
+
+<img width="1276" height="720" alt="image" src="https://github.com/user-attachments/assets/8ea91956-e7d3-4dc6-a6b6-6f121b294af4" />
+
+
 ## Installation
 
 ```bash
@@ -46,4 +50,3 @@ pip install pygame numpy
 
 # Run the game
 python main.py
-<img width="1275" height="719" alt="image" src="https://github.com/user-attachments/assets/ffbd4224-6c08-4812-a9ce-fae1a98ffc9c" />
