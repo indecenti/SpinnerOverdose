@@ -38,6 +38,9 @@ Custom `SoundSynthesizer` generates all game sounds procedurally:
 <img width="1276" height="720" alt="image" src="https://github.com/user-attachments/assets/8ea91956-e7d3-4dc6-a6b6-6f121b294af4" />
 
 
+<img width="1272" height="717" alt="image" src="https://github.com/user-attachments/assets/463b6eaa-cb8e-4243-82af-4df24999dba5" />
+
+
 ## Installation
 
 ```bash
