@@ -4097,8 +4097,8 @@ class YahtzeeSpinner(MiniGame):
         self.roll_animation = 0
         self.roll_cooldown = 0
         self.selected_die = 0
-        self.turn += 1
-    
+        self.turn += 1  # ← AGGIUNTO: questo era il problema principale!
+
     def calculate_score(self, cat_id: str, dice: List[int]) -> int:
         counts = [0] * 7
         for d in dice:
@@ -4147,7 +4147,6 @@ class YahtzeeSpinner(MiniGame):
         self.scores[cat_id] = points
         
         # Incrementa il turno DOPO aver registrato il punteggio
-        self.turn += 1  # ← AGGIUNTO: questo era il problema principale!
         
         is_upper = [c for c in self.CATEGORIES if c[0] == cat_id][0][2]
         if is_upper:
@@ -4368,128 +4367,199 @@ class YahtzeeSpinner(MiniGame):
             self.screen_shake -= dt
         
         return True
-    
+        
+
+
+
+
+
+
+
+
+
+
+
+
+    def _dice_used_for_category(self, cat_id, dice):
+        """
+        Restituisce una lista di 5 booleani che indicano quali dadi contano per la categoria.
+        Le regole seguono il gioco Yahtzee.
+        """
+        from collections import Counter
+
+        counts = Counter(dice)
+
+        # Upper section: Ones-Sixes
+        num_map = {
+            'ones': 1, 'twos': 2, 'threes': 3,
+            'fours': 4, 'fives': 5, 'sixes': 6
+        }
+        if cat_id in num_map:
+            target = num_map[cat_id]
+            return [d == target for d in dice]
+
+        # Chance: tutti i dadi contano
+        if cat_id == 'chance':
+            return [True]*5
+
+        # Three/Four of a kind: evidenzia il numero che massimizza il punteggio
+        if cat_id in ['three_kind','four_kind']:
+            needed = 3 if cat_id == 'three_kind' else 4
+            # trova il numero con almeno 'needed' dadi
+            target = None
+            for num, cnt in counts.most_common():  # ordina dal più frequente
+                if cnt >= needed:
+                    target = num
+                    break
+            return [d == target for d in dice] if target is not None else [False]*5
+
+        # Full House: evidenzia trio + coppia
+        if cat_id == 'full_house':
+            trio = None
+            pair = None
+            for num, cnt in counts.items():
+                if cnt == 3:
+                    trio = num
+                elif cnt == 2:
+                    pair = num
+            if trio is not None and pair is not None:
+                return [d == trio or d == pair for d in dice]
+            else:
+                return [False]*5
+
+        # Small / Large Straight
+        if cat_id in ['sm_straight', 'lg_straight']:
+            # ordina i dadi unici
+            unique = sorted(set(dice))
+            # controlla sequenze valide
+            straights = [
+                [1,2,3,4], [2,3,4,5], [3,4,5,6]  # small
+            ]
+            if cat_id == 'lg_straight':
+                straights = [[1,2,3,4,5],[2,3,4,5,6]]
+            # trova la sequenza massima presente
+            seq = []
+            for s in straights:
+                if all(num in unique for num in s):
+                    if len(s) > len(seq):
+                        seq = s
+            # evidenzia i dadi che fanno parte della sequenza
+            return [d in seq for d in dice]
+
+        # Yahtzee: tutti e 5 i dadi uguali
+        if cat_id == 'yahtzee':
+            for num, cnt in counts.items():
+                if cnt == 5:
+                    return [d == num for d in dice]
+            return [False]*5
+
+        # default
+        return [False]*5
+
+
+
 
 
     def _draw_scorecard(self, surface, sx, sy):
-        """Scorecard minimale ultra-compatta: griglia pulita, spazi ottimizzati, hover azzurro"""
-        
-        # Dimensioni compatte (ridotta altezza a 310)
-        card_w, card_h = 780, 310
+        """Scorecard minimalista con colonna DADI, Upper colorato, senza TOTAL e senza header"""
+
+        card_w, card_h = 780, 320
         x = (1280 - card_w) // 2 + sx
         y = 120 + sy
-        
-        # Sfondo pulito
-        main_rect = pygame.Rect(x, y, card_w, card_h)
-        pygame.draw.rect(surface, (255, 255, 255), main_rect)
-        pygame.draw.rect(surface, (0, 0, 0), main_rect, 2)
-        
-        # Header minimo
-        title_surf = self.font_small.render("YAHTZEE", True, (20, 20, 20))
-        surface.blit(title_surf, (x + card_w//2 - title_surf.get_width()//2, y + 8))
-        pygame.draw.line(surface, (100, 100, 100), (x + 15, y + 28), (x + card_w - 15, y + 28), 1)
-        
-        # Colonne ottimizzate (3 colonne compatte)
-        col1_x = x + 25        # Categoria (compatta)
-        col1_w = 140
-        col2_x = x + 175       # Descrizione (media)
-        col2_w = 400
-        col3_x = x + 585       # Score (stretta)
-        col3_w = 170
-        
-        # Header colonne (font piccolo, compatto)
-        header_y = y + 32
-        h1 = self.font_tiny.render("CAT", True, (60, 60, 60))
-        h2 = self.font_tiny.render("DESCRIPTION", True, (60, 60, 60))
-        h3 = self.font_tiny.render("SCORE", True, (60, 60, 60))
-        surface.blit(h1, (col1_x + 10, header_y))
-        surface.blit(h2, (col2_x + 10, header_y))
-        surface.blit(h3, (col3_x + 50, header_y))
-        
-        # Linee griglia verticali sottili
-        pygame.draw.line(surface, (220, 220, 220), (col1_x + col1_w, y + 28), (col1_x + col1_w, y + card_h - 35), 1)
-        pygame.draw.line(surface, (220, 220, 220), (col2_x + col2_w, y + 28), (col2_x + col2_w, y + card_h - 35), 1)
-        
-        # Righe compattissime (row_height ridotta a 18px)
-        row_start_y = y + 50
-        row_h = 18
-        
-        # Descrizioni abbreviate
-        desc_map = {
-            'ones': 'Sum of 1s', 'twos': 'Sum of 2s', 'threes': 'Sum of 3s',
-            'fours': 'Sum of 4s', 'fives': 'Sum of 5s', 'sixes': 'Sum of 6s',
-            'three_kind': 'Three of a kind', 'four_kind': 'Four of a kind',
-            'full_house': 'Full House (25pts)', 'small_straight': 'Small Straight (30pts)',
-            'large_straight': 'Large Straight (40pts)', 'yahtzee': 'YAHTZEE! (50pts)',
-            'chance': 'Chance (sum all)'
-        }
-        
-        for idx, (cat_id, cat_name, is_upper) in enumerate(self.CATEGORIES):
-            row_y = row_start_y + idx * row_h
-            
-            # Righe alternate leggere
-            if idx % 2 == 1:
-                pygame.draw.rect(surface, (248, 248, 248), (x + 15, row_y, card_w - 30, row_h))
-            
-            # Hover azzurro con pulse
-            if self.phase == 'scoring' and idx == self.selected_category:
-                pulse = 0.7 + 0.3 * abs(math.sin(self.time * 5))
-                highlight_col = (220, 240, 255)
-                pygame.draw.rect(surface, highlight_col, (x + 15, row_y, card_w - 30, row_h))
-                pygame.draw.rect(surface, (70, 130, 200), (x + 15, row_y, card_w - 30, row_h), 2)
-            
 
-            
-            row_text_y = row_y + (row_h - self.font_tiny.get_height())//2
-            
-            # Categoria nome
-            cat_col = (80, 80, 80) if cat_id not in self.scores else (160, 160, 160)
-            cat_surf = self.font_tiny.render(cat_name.upper(), True, cat_col)
-            surface.blit(cat_surf, (col1_x + 10, row_text_y))
-            
-            # Descrizione
-            desc_surf = self.font_tiny.render(desc_map.get(cat_id, ''), True, (100, 100, 100))
-            surface.blit(desc_surf, (col2_x + 10, row_text_y))
-            
-            # Score box compatto
-            if cat_id in self.scores:
-                pts = self.scores[cat_id]
-                pts_col = (10, 130, 10)
-                bg_col = (240, 255, 240)
+        pygame.draw.rect(surface, (255,255,255),
+                        (x,y,card_w,card_h), border_radius=6)
+        pygame.draw.rect(surface, (40,40,40),
+                        (x,y,card_w,card_h), 2, border_radius=6)
+
+        # ---- COLUMN POSITIONS ----
+        col_cat   = x + 18
+        col_desc  = x + 155
+        col_dice  = x + 400
+        col_score = x + card_w - 120
+
+        # Vertical separators
+        for cx in (col_desc-8, col_dice-8, col_score-8):
+            pygame.draw.line(surface, (230,230,230),
+                            (cx, y+8), (cx, y+card_h-18), 1)
+
+        # ---- ROWS ----
+        row_h = 22
+        row_y0 = y + 10
+
+        desc_map = {cat_id: name for cat_id, name, _ in self.CATEGORIES}
+
+        for i, (cat_id, cat_name, is_upper) in enumerate(self.CATEGORIES):
+            ry = row_y0 + i*row_h
+
+            # alternate rows
+            if i%2:
+                pygame.draw.rect(surface,(248,248,248),
+                                (x+5,ry,card_w-10,row_h))
+
+            # hover
+            if self.phase=='scoring' and i==self.selected_category:
+                pygame.draw.rect(surface,(220,240,255),
+                                (x+5,ry,card_w-10,row_h))
+                pygame.draw.rect(surface,(80,140,220),
+                                (x+5,ry,card_w-10,row_h),2)
+
+            ty = ry + (row_h - self.font_tiny.get_height())//2
+
+            used = cat_id in self.scores
+
+            # ---- CATEGORY + DESCRIPTION COLORS ----
+            if used:
+                ccol = dcol = (160,160,160)
+            elif i < 6:  # Upper section
+                ccol = (40,90,160)
+                dcol = (90,120,170)
             else:
-                pts = self.calculate_score(cat_id, self.dice)
-                pts_col = (0, 90, 180) if pts > 0 else (170, 170, 170)
-                bg_col = (245, 250, 255) if pts > 0 else (250, 250, 250)
-            
-            pts_surf = self.font_tiny.render(str(pts), True, pts_col)
-            pts_box_w = max(50, pts_surf.get_width() + 16)
-            pts_box = pygame.Rect(col3_x + col3_w - pts_box_w - 10, row_y + 2, pts_box_w, row_h - 4)
-            pygame.draw.rect(surface, bg_col, pts_box)
-            pygame.draw.rect(surface, pts_col, pts_box, 1)
-            surface.blit(pts_surf, (pts_box.centerx - pts_surf.get_width()//2, row_text_y))
-        
-        # Bonus ultra-compatto
-        bonus_y = row_start_y + 13 * row_h + 8
-        pygame.draw.line(surface, (100, 100, 100), (x + 15, bonus_y - 3), (x + card_w - 15, bonus_y - 3), 1)
-        
-        if self.upper_bonus > 0:
-            bonus_surf = self.font_small.render(f"UPPER BONUS: +{self.upper_bonus}", True, (30, 30, 30))
-            bonus_x = x + card_w//2 - bonus_surf.get_width()//2
-            bonus_bg = pygame.Rect(bonus_x - 12, bonus_y, bonus_surf.get_width() + 24, 20)
-            pygame.draw.rect(surface, (255, 240, 200), bonus_bg)
-            pygame.draw.rect(surface, (200, 160, 80), bonus_bg, 2)
-            surface.blit(bonus_surf, (bonus_x, bonus_y + 2))
-        
-        # Totale compatto bottom-right
-        total = sum(self.scores.values())
-        total_surf = self.font_small.render(f"TOTAL: {total}", True, (40, 40, 40))
-        surface.blit(total_surf, (x + card_w - total_surf.get_width() - 25, y + card_h - 22))
+                ccol = (70,70,70)
+                dcol = (110,110,110)
 
+            # category + description
+            surface.blit(self.font_tiny.render(cat_name.upper(),True,ccol),(col_cat,ty))
+            surface.blit(self.font_tiny.render(desc_map[cat_id],True,dcol),(col_desc,ty))
 
+            # ---- DICE COLUMN ----
+            dice_used = self._dice_used_for_category(cat_id, self.dice)
+            dx = col_dice
+            for j,val in enumerate(self.dice):
+                size = 14
+                rect = pygame.Rect(dx + j*(size+4), ry+4, size, size)
+                color = (200,60,60) if dice_used[j] else (220,220,220)
+                pygame.draw.rect(surface,color,rect,border_radius=3)
+                pygame.draw.rect(surface,(120,120,120),rect,1,border_radius=3)
 
+                # pip = valore del dado
+                pip = self.font_tiny.render(str(val),True,(30,30,30))
+                surface.blit(pip,(rect.centerx-pip.get_width()//2,
+                                rect.centery-pip.get_height()//2))
 
+            # ---- SCORE BOX ----
+            if used:
+                pts = self.scores[cat_id]
+                fg,bg = (20,120,20),(235,250,235)
+            else:
+                pts = self.calculate_score(cat_id,self.dice)
+                fg = (0,90,180) if pts>0 else (170,170,170)
+                bg = (246,248,250)
 
+            box = pygame.Rect(col_score, ry+3, 70, row_h-6)
+            pygame.draw.rect(surface,bg,box,border_radius=4)
+            pygame.draw.rect(surface,fg,box,1,border_radius=4)
+            txt = self.font_tiny.render(str(pts),True,fg)
+            surface.blit(txt,(box.centerx-txt.get_width()//2,ty))
 
+        # ---- BONUS ----
+        by = row_y0 + len(self.CATEGORIES)*row_h + 4
+        pygame.draw.line(surface,(180,180,180),
+                        (x+12,by),(x+card_w-12,by),1)
+
+        if self.upper_bonus:
+            b = self.font_tiny.render(f"UPPER BONUS +{self.upper_bonus}",True,(50,50,50))
+            surface.blit(b,(x+card_w//2-b.get_width()//2,by+4))
 
 
 
