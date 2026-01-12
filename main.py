@@ -4097,7 +4097,6 @@ class YahtzeeSpinner(MiniGame):
         self.roll_animation = 0
         self.roll_cooldown = 0
         self.selected_die = 0
-        self.spinner_accumulator = 0[file:1]
         self.turn += 1
     
     def calculate_score(self, cat_id: str, dice: List[int]) -> int:
@@ -4138,12 +4137,17 @@ class YahtzeeSpinner(MiniGame):
         
         return 0
     
+
+        
     def score_category(self, cat_id: str):
         if cat_id in self.scores:
             return
         
         points = self.calculate_score(cat_id, self.dice)
         self.scores[cat_id] = points
+        
+        # Incrementa il turno DOPO aver registrato il punteggio
+        self.turn += 1  # ← AGGIUNTO: questo era il problema principale!
         
         is_upper = [c for c in self.CATEGORIES if c[0] == cat_id][0][2]
         if is_upper:
@@ -4166,17 +4170,23 @@ class YahtzeeSpinner(MiniGame):
         if self.synth:
             self.synth.create_powerup().play()
         
-        # Prossimo turno
-        
-        if self.turn >= 13:
+        # Controlla se partita finita (ora turn parte da 0 e arriva a 13 dopo ultima categoria)
+        if self.turn >= 13:  # ← Corretto: 13 categorie = turn 13 dopo ultima
             self.game_over = True
+            self.create_floating_text(640, 400, "GAME COMPLETE!", (255, 215, 0))
             if self.synth:
                 self.synth.create_game_over().play()
         else:
+            # Reset per nuovo turno
             self.rolls_left = 3
             self.dice_held = [False] * 5
             self.phase = 'roll'
             self.can_roll = True
+            self.roll_animation = 0
+            self.roll_cooldown = 0
+            self.selected_die = 0
+            self.new_turn()  # ← OPZIONALE: se hai questa funzione, chiamala qui
+
     
     def create_particles(self, x: float, y: float, color: tuple, count: int):
         for _ in range(count):
