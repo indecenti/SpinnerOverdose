@@ -1,3 +1,5 @@
+<img width="1920" height="728" alt="spinner_overdose_logo" src="https://github.com/user-attachments/assets/f532bf31-70a3-4d96-a253-b036117aa408" />
+
 # Spinner Overdose - Arcade Mini Game Engine
 
 A complete arcade game engine built with Pygame featuring a spinner-based input system, multiple mini-games, high score tracking, and procedural audio synthesis.
